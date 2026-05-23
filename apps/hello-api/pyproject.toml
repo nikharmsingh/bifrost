@@ -7,6 +7,5 @@ dependencies = [
     "uvicorn[standard]>=0.29",
 ]
 
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
+[tool.uv]
+package = false
