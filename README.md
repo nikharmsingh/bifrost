@@ -8,6 +8,7 @@ A `uv`-powered Python monorepo for MCP servers, FastAPI backends, and LangGraph 
 |---|---|
 | [HLD](docs/HLD.md) | What Turborepo is, how this repo maps to it, system architecture, technology choices |
 | [LLD](docs/LLD.md) | uv workspace mechanics, package internals, Vercel deployment design, how to add a new app |
+| [GUIDE](docs/GUIDE.md) | How to create and deploy apps, agents, APIs, and MCP servers |
 
 ## Stack
 
