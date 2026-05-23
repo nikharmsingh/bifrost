@@ -1,10 +1,12 @@
 {
   "builds": [
-    { "src": "apps/hello-api/api/index.py", "use": "@vercel/python" },
-    { "src": "apps/notes-api/api/index.py", "use": "@vercel/python" }
+    { "src": "apps/hello-api/api/index.py",      "use": "@vercel/python" },
+    { "src": "apps/notes-api/api/index.py",       "use": "@vercel/python" },
+    { "src": "apps/code-reviewer/api/index.py",   "use": "@vercel/python" }
   ],
   "routes": [
-    { "src": "/notes(.*)", "dest": "apps/notes-api/api/index.py" },
-    { "src": "/(.*)",      "dest": "apps/hello-api/api/index.py" }
+    { "src": "/code-review(.*)", "dest": "apps/code-reviewer/api/index.py" },
+    { "src": "/notes(.*)",       "dest": "apps/notes-api/api/index.py" },
+    { "src": "/(.*)",            "dest": "apps/hello-api/api/index.py" }
   ]
 }
