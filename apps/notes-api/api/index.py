@@ -5,7 +5,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel
 
-app = FastAPI(title="Notes API", version="0.1.0", docs_url="/notes/docs")
+app = FastAPI(title="Notes API", version="0.1.0", docs_url="/notes/docs", openapi_url="/notes/openapi.json")
 
 app.add_middleware(
     CORSMiddleware,
