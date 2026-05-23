@@ -1,0 +1,17 @@
+[project]
+name = "knowledge-base"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "fastmcp>=2.0",
+    "core",
+    "tools",
+]
+
+[tool.uv.sources]
+core  = { workspace = true }
+tools = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"

@@ -1,0 +1,20 @@
+[project]
+name = "research-agent"
+version = "0.1.0"
+requires-python = ">=3.12"
+dependencies = [
+    "langgraph>=0.2",
+    "langchain-anthropic>=0.1",
+    "core",
+    "llm",
+    "tools",
+]
+
+[tool.uv.sources]
+core  = { workspace = true }
+llm   = { workspace = true }
+tools = { workspace = true }
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
