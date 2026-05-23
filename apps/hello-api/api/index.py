@@ -95,6 +95,7 @@ async def root() -> str:
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Bifrost API</title>
     <script defer src="/_vercel/speed-insights/script.js"></script>
+    <script defer src="/_vercel/insights/script.js"></script>
     <style>
         * {{ box-sizing: border-box; margin: 0; padding: 0; }}
         body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; padding: 48px 24px; }}
