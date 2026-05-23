@@ -9,4 +9,5 @@ members = [
     "mcp-servers/*",
     "apis/*",
     "agents/*",
+    "apps/*",
 ]
