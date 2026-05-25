@@ -1,8 +1,16 @@
+import pathlib
 import random
 import uuid
 from datetime import datetime, timezone
 
 from fastapi import FastAPI, HTTPException
+
+
+def _read_version() -> str:
+    try:
+        return (pathlib.Path(__file__).parents[3] / "VERSION").read_text().strip()
+    except (FileNotFoundError, IndexError):
+        return "dev"
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
@@ -10,7 +18,7 @@ from pydantic import BaseModel
 app = FastAPI(
     title="Hello API",
     description="A simple FastAPI app deployed on Vercel",
-    version="0.6.0",
+    version=_read_version(),
     docs_url="/docs",
     redoc_url="/redoc",
 )
