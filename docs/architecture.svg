@@ -1,7 +1,7 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 580" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 900 630" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif">
 
   <!-- Background -->
-  <rect width="900" height="580" fill="#f8fafc" rx="16"/>
+  <rect width="900" height="630" fill="#f8fafc" rx="16"/>
 
   <!-- Title -->
   <text x="450" y="36" text-anchor="middle" font-size="17" font-weight="700" fill="#0f172a">⚡ Bifrost — System Architecture</text>
@@ -63,7 +63,7 @@
   <!-- ── THREE COLUMNS ──────────────────────────────────────── -->
 
   <!-- Apps -->
-  <rect x="20" y="264" width="272" height="190" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" rx="10"/>
+  <rect x="20" y="264" width="272" height="242" fill="#eff6ff" stroke="#93c5fd" stroke-width="1.5" rx="10"/>
   <text x="34" y="282" font-size="10" font-weight="700" fill="#1d4ed8" letter-spacing="1">APPS — Vercel</text>
 
   <rect x="34" y="288" width="244" height="44" fill="#ffffff" stroke="#93c5fd" stroke-width="1" rx="7"/>
@@ -78,8 +78,12 @@
   <text x="156" y="410" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">code-reviewer</text>
   <text x="156" y="426" text-anchor="middle" font-size="10" fill="#64748b">Groq · structured JSON review</text>
 
+  <rect x="34" y="444" width="244" height="44" fill="#ffffff" stroke="#93c5fd" stroke-width="1" rx="7"/>
+  <text x="156" y="462" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">resume-analyzer</text>
+  <text x="156" y="478" text-anchor="middle" font-size="10" fill="#64748b">PDF upload · Anthropic / Groq</text>
+
   <!-- APIs -->
-  <rect x="308" y="264" width="272" height="190" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" rx="10"/>
+  <rect x="308" y="264" width="272" height="242" fill="#f0fdf4" stroke="#86efac" stroke-width="1.5" rx="10"/>
   <text x="322" y="282" font-size="10" font-weight="700" fill="#15803d" letter-spacing="1">APIS — Docker</text>
 
   <rect x="322" y="288" width="244" height="44" fill="#ffffff" stroke="#86efac" stroke-width="1" rx="7"/>
@@ -91,7 +95,7 @@
   <text x="444" y="374" text-anchor="middle" font-size="10" fill="#64748b">event receiver · FastAPI</text>
 
   <!-- Agents -->
-  <rect x="596" y="264" width="284" height="190" fill="#fdf4ff" stroke="#d8b4fe" stroke-width="1.5" rx="10"/>
+  <rect x="596" y="264" width="284" height="242" fill="#fdf4ff" stroke="#d8b4fe" stroke-width="1.5" rx="10"/>
   <text x="610" y="282" font-size="10" font-weight="700" fill="#7e22ce" letter-spacing="1">AGENTS — Docker / LangGraph</text>
 
   <rect x="610" y="288" width="256" height="44" fill="#ffffff" stroke="#d8b4fe" stroke-width="1" rx="7"/>
@@ -103,20 +107,20 @@
   <text x="738" y="374" text-anchor="middle" font-size="10" fill="#64748b">coder → reviewer</text>
 
   <!-- connector -->
-  <line x1="450" y1="454" x2="450" y2="472" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
+  <line x1="450" y1="506" x2="450" y2="524" stroke="#cbd5e1" stroke-width="1.5" stroke-dasharray="4,3"/>
 
   <!-- ── MCP SERVERS ────────────────────────────────────────── -->
-  <rect x="20" y="472" width="860" height="88" fill="#f0fdfa" stroke="#5eead4" stroke-width="1.5" rx="10"/>
-  <text x="34" y="490" font-size="10" font-weight="700" fill="#0f766e" letter-spacing="1">MCP SERVERS — stdio (FastMCP)</text>
+  <rect x="20" y="524" width="860" height="88" fill="#f0fdfa" stroke="#5eead4" stroke-width="1.5" rx="10"/>
+  <text x="34" y="542" font-size="10" font-weight="700" fill="#0f766e" letter-spacing="1">MCP SERVERS — stdio (FastMCP)</text>
 
   <!-- knowledge-base -->
-  <rect x="34" y="496" width="400" height="52" fill="#ffffff" stroke="#5eead4" stroke-width="1" rx="8"/>
-  <text x="234" y="517" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">knowledge-base</text>
-  <text x="234" y="535" text-anchor="middle" font-size="10" fill="#64748b">search tool · kb://status resource</text>
+  <rect x="34" y="548" width="400" height="52" fill="#ffffff" stroke="#5eead4" stroke-width="1" rx="8"/>
+  <text x="234" y="569" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">knowledge-base</text>
+  <text x="234" y="587" text-anchor="middle" font-size="10" fill="#64748b">search tool · kb://status resource</text>
 
   <!-- code-runner -->
-  <rect x="452" y="496" width="414" height="52" fill="#ffffff" stroke="#5eead4" stroke-width="1" rx="8"/>
-  <text x="659" y="517" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">code-runner</text>
-  <text x="659" y="535" text-anchor="middle" font-size="10" fill="#64748b">executes Python snippets in subprocess</text>
+  <rect x="452" y="548" width="414" height="52" fill="#ffffff" stroke="#5eead4" stroke-width="1" rx="8"/>
+  <text x="659" y="569" text-anchor="middle" font-size="12" font-weight="600" fill="#1e293b">code-runner</text>
+  <text x="659" y="587" text-anchor="middle" font-size="10" fill="#64748b">executes Python snippets in subprocess</text>
 
 </svg>
