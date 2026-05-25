@@ -4,6 +4,13 @@ All notable changes to Bifrost are documented here.
 
 ---
 
+## [v0.6.1] — 2026-05-25
+
+### Fixed
+- **Vercel build stability** — reverted experimental per-app `requirements.txt` split and builder-version pinning that caused cascading `ENOENT` build failures across all functions. Restored the single root `requirements.txt` with the original working package set.
+
+---
+
 ## [v0.6.0] — 2026-05-25
 
 ### Added
