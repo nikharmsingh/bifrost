@@ -4,6 +4,34 @@ All notable changes to Bifrost are documented here.
 
 ---
 
+## [v0.8.0] — 2026-10-25
+
+### ⚠️ Breaking
+- **Notes API is now private and per-user.** Every endpoint requires GitHub sign-in, and each user sees only their own notes; another user's note returns `404`. The public `GET /notes` listing and the shared `X-API-Key` (`NOTES_API_KEY`) are removed. Notes is browser-only: there is no token or programmatic access.
+
+### Added
+- **Live dashboard** at `/`. It lists every deployed app with live health, latency, version and endpoints (🔒 marks endpoints that need sign-in), plus links to each app's UI and API docs, the latest release and CI status. Apps are discovered from `vercel.json` and each app's `openapi.json`, so a new app appears automatically. The raw data is at `/registry`.
+- **Code Reviewer UI** at `/code-review`. Paste code, pick a language, and get a score, a recommendation, severity-sorted issues with fixes, and strengths. Includes a sample snippet and a ⌘/Ctrl+Enter shortcut.
+- **Notes UI** at `/notes/ui`: a searchable note list and editor with GitHub sign-in, unsaved-change guards and ⌘/Ctrl+S.
+- **GitHub sign-in for Notes** (OAuth). The session is a signed, httpOnly, `Secure`, `SameSite=Lax` cookie, and a signed `state` cookie protects the login flow against CSRF. Notes created before accounts existed are assigned to `NOTES_OWNER_GITHUB_LOGIN` on their first sign-in.
+- **`/notes/health`**, which checks the database.
+- **Requirements guard test.** CI fails if a Vercel app imports a package that's missing from the `requirements.txt` Vercel installs for it.
+- **Neon preview cleanup workflow.** Closing a PR deletes its `preview/<branch>` Neon database branch, so previews no longer hit Neon's branch cap.
+
+### Fixed
+- **Code Reviewer returned 500 on every review.** Groq shut down `llama-3.3-70b-versatile` on 2026-08-16. Code Reviewer and Resume Analyzer's Groq fallback now default to `openai/gpt-oss-120b`, which can be overridden with `GROQ_MODEL`. Groq API errors now return `502` with a message.
+- **Landing page outage after the dashboard deploy.** hello-api installs its dependencies from `apps/hello-api/requirements.txt`, which was missing `httpx`. The new requirements guard test now covers this.
+
+### Changed
+- App descriptions were added to Notes, Code Reviewer and Resume Analyzer, and they show on the dashboard.
+- `.gitignore` now covers the per-developer Neon agent tooling: `.mcp.json`, `.claude/skills/` and `skills-lock.json`.
+
+### Upgrade notes
+- Set `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET` and `NOTES_OWNER_GITHUB_LOGIN` for Notes sign-in. The OAuth app's callback URL must be `https://<host>/notes/auth/callback`. `NOTES_API_KEY` is no longer used and can be removed.
+- For the Neon cleanup workflow, set the repo variable `NEON_PROJECT_ID` and the secret `NEON_API_KEY`.
+
+---
+
 ## [v0.7.0] — 2026-10-24
 
 ### Security
