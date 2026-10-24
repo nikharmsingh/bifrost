@@ -4,6 +4,33 @@ All notable changes to Bifrost are documented here.
 
 ---
 
+## [v0.9.0] — 2026-10-25
+
+### ⚠️ Breaking
+- **Code Reviewer and Resume Analyzer need sign-in and your own Groq key.** Each user saves a key once in `/settings`, and every request runs on that user's key, so the server's keys are never spent on visitors. Anonymous requests return `401`, and requests without a saved key return `428` pointing to Settings.
+- **Resume Analyzer is Groq-only.** The Claude path, which used the server's Anthropic key, is removed.
+- **Sign-in moved to `/auth/*` and covers the whole site.** The GitHub OAuth callback is now `https://<host>/auth/callback`. Existing Notes sessions ended, so users sign in once more.
+
+### Added
+- **Shared GitHub sign-in** (`packages/auth`, `bifrost_auth`). One `bifrost_session` cookie (`Path=/`) works across every app, and the post-login `?next=` redirect is restricted to paths on this site. Any app can add sign-in with `Depends(auth.current_user)`.
+- **Bring-your-own keys.** Keys are validated with Groq before saving, then stored **AES-GCM-encrypted** under `KEY_ENCRYPTION_SECRET`, with the user ID bound into the encryption. Only the last 4 characters are ever shown again. The API is `GET /auth/keys` and `PUT`/`DELETE /auth/keys/{provider}`.
+- **Settings page** at `/settings` for your account and Groq key. The dashboard's new account chip has **Sign in**, **Settings** and **Sign out**.
+- **Access banners** in Code Reviewer and Resume Analyzer that explain "sign in" or "add your key" and disable the action until both are in place.
+
+### Changed
+- **Faster pages.** UI pages are served from Vercel's regional edge cache for 5 minutes (stale-while-revalidate 1 day), and `/registry` for 30 seconds. Browsers always revalidate, and personal endpoints are never cached. In testing from India, cached page loads dropped from about 330 ms (spiking to about 1 s on cold starts) to about 110 ms.
+- **Notes loads your profile and notes in parallel.**
+- **Repo cleanup.** Removed the unused `packages/tools`, the `apis/webhooks` and `mcp-servers/knowledge-base` stubs, `scripts/seed_db.py`, `apps/hello-api/vercel.json`, the three deploy workflows that didn't deploy anything, and the stale `docs/`. The README is rewritten to match the repo, with verified commands. The agent graph check moved into pytest. The repo went from 83 to 64 tracked files.
+- **Smarter requirements guard.** It follows workspace packages, so a dependency of `bifrost_auth` that's missing from an app's `requirements.txt` fails CI.
+- **Smaller Vercel bundle:** `anthropic` removed, `cryptography` added.
+
+### Upgrade notes
+- Set `KEY_ENCRYPTION_SECRET` (32 random bytes, urlsafe base64) and **never change it**, or saved keys become unreadable.
+- Point the GitHub OAuth app's callback at `/auth/callback`.
+- `GROQ_API_KEY` and `ANTHROPIC_API_KEY` are no longer read by any deployed app and can be removed.
+
+---
+
 ## [v0.8.0] — 2026-10-25
 
 ### ⚠️ Breaking
