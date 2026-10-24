@@ -19,7 +19,8 @@ SPECS = {
             "/notes": {
                 "get": {"summary": "List Notes"},
                 "post": {"summary": "Create Note", "parameters": [{"in": "header", "name": "x-api-key"}]},
-            }
+            },
+            "/notes/ui": {"get": {"responses": {"200": {"content": {"text/html": {}}}}}},
         },
     },
     "/resume-analyzer/openapi.json": {
@@ -68,9 +69,13 @@ def test_registry_reports_metadata_health_auth_and_ui(monkeypatch):
 
     notes_app = apps["notes-api"]
     assert not notes_app.health.ok and notes_app.health.status_code == 503
-    assert {(e.method, e.auth) for e in notes_app.endpoints} == {("GET", False), ("POST", True)}
+    assert {(e.method, e.path, e.auth) for e in notes_app.endpoints} >= {
+        ("GET", "/notes", False),
+        ("POST", "/notes", True),
+    }
 
     assert apps["resume-analyzer"].ui == "/resume-analyzer"
+    assert apps["notes-api"].ui == "/notes/ui"
     assert apps["code-reviewer"].ui is None
 
 

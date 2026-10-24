@@ -92,3 +92,23 @@ def test_notes_without_database_returns_503(monkeypatch):
     monkeypatch.setattr(notes, "NOTES_API_KEY", "")
     client = TestClient(notes.app)
     assert client.get("/notes").status_code == 503
+
+
+# ── app UIs ────────────────────────────────────────────────────────────────────
+
+
+def test_code_reviewer_serves_ui():
+    response = TestClient(code_reviewer.app).get("/code-review")
+    assert response.status_code == 200
+    assert "text/html" in response.headers["content-type"]
+    assert "<title>Code Reviewer</title>" in response.text
+    assert ".innerHTML =" not in response.text
+
+
+def test_notes_ui_is_not_captured_as_note_id(monkeypatch):
+    monkeypatch.setattr(notes, "engine", None)
+    # Served without touching the database, and not routed to GET /notes/{note_id}
+    response = TestClient(notes.app).get("/notes/ui")
+    assert response.status_code == 200
+    assert "<title>Notes</title>" in response.text
+    assert ".innerHTML =" not in response.text

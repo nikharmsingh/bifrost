@@ -1,0 +1,250 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Code Reviewer</title>
+  <meta name="description" content="Paste code and get an AI review with a score, issues and suggestions.">
+  <script defer src="/_vercel/insights/script.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a0a; --surface: #141414; --surface-2: #1c1c1c; --border: #262626; --focus: #6366f1;
+      --text: #e5e5e5; --muted: #8a8a8a; --faint: #525252; --accent: #818cf8; --accent-2: #a78bfa;
+      --high: #f87171; --high-bg: rgba(248, 113, 113, .12); --medium: #fbbf24; --medium-bg: rgba(251, 191, 36, .12);
+      --low: #60a5fa; --low-bg: rgba(96, 165, 250, .12); --ok: #4ade80;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #fafafa; --surface: #ffffff; --surface-2: #f4f4f5; --border: #e4e4e7; --focus: #6366f1;
+        --text: #18181b; --muted: #52525b; --faint: #a1a1aa; --accent: #4f46e5; --accent-2: #7c3aed;
+        --high: #b91c1c; --high-bg: rgba(185, 28, 28, .08); --medium: #b45309; --medium-bg: rgba(180, 83, 9, .08);
+        --low: #1d4ed8; --low-bg: rgba(29, 78, 216, .08); --ok: #15803d;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 40px 16px; line-height: 1.5; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    .container { max-width: 880px; margin: 0 auto; }
+    .back { font-size: .85rem; color: var(--muted); }
+    header { margin: 12px 0 28px; }
+    h1 { font-size: 2rem; font-weight: 700; letter-spacing: -.02em; background: linear-gradient(135deg, #6366f1, var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; display: inline-block; }
+    .tagline { color: var(--muted); margin-top: 4px; }
+
+    .panel { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; }
+    .row { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+    label { font-size: .85rem; color: var(--muted); font-weight: 500; }
+    select, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font-size: .9rem; outline: none; }
+    select { padding: 7px 10px; }
+    select:focus, textarea:focus { border-color: var(--focus); }
+    textarea { width: 100%; min-height: 300px; padding: 14px; resize: vertical; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .85rem; line-height: 1.6; tab-size: 4; }
+    .counter { font-size: .8rem; color: var(--muted); font-variant-numeric: tabular-nums; }
+    .counter.over { color: var(--high); }
+    .submit { margin-top: 14px; display: flex; gap: 12px; align-items: center; flex-wrap: wrap; }
+    button { padding: 10px 22px; background: linear-gradient(135deg, #6366f1, var(--accent-2)); border: none; border-radius: 8px; color: #fff; font-size: .95rem; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: .5; cursor: wait; }
+    button.ghost { background: transparent; border: 1px solid var(--border); color: var(--text); font-weight: 500; }
+    .hint { font-size: .8rem; color: var(--faint); }
+    kbd { font-family: inherit; font-size: .75rem; border: 1px solid var(--border); border-radius: 4px; padding: 0 5px; }
+
+    .error { display: none; margin-top: 16px; padding: 12px 14px; border-radius: 8px; background: var(--high-bg); color: var(--high); font-size: .9rem; }
+    .error.show { display: block; }
+    .spinner { display: none; margin-top: 24px; color: var(--muted); font-size: .9rem; }
+    .spinner.show { display: block; }
+
+    #results { display: none; margin-top: 24px; flex-direction: column; gap: 16px; }
+    #results.show { display: flex; }
+    .overview { display: flex; gap: 20px; align-items: center; flex-wrap: wrap; }
+    .score { width: 96px; height: 96px; border-radius: 50%; display: grid; place-items: center; flex-shrink: 0; }
+    .score-inner { width: 78px; height: 78px; border-radius: 50%; background: var(--surface); display: grid; place-items: center; text-align: center; }
+    .score-num { font-size: 1.6rem; font-weight: 700; line-height: 1; }
+    .score-of { font-size: .7rem; color: var(--muted); }
+    .overview-text { flex: 1 1 260px; }
+    .recommendation { font-weight: 600; margin-bottom: 6px; }
+    .summary { color: var(--muted); font-size: .9rem; }
+    h2 { font-size: 1rem; font-weight: 600; margin-bottom: 12px; display: flex; align-items: center; gap: 8px; }
+    .count { font-size: .75rem; color: var(--muted); font-weight: 500; }
+    .issues { list-style: none; display: flex; flex-direction: column; gap: 10px; }
+    .issue { border: 1px solid var(--border); border-left-width: 3px; border-radius: 8px; padding: 12px 14px; }
+    .issue.high { border-left-color: var(--high); } .issue.medium { border-left-color: var(--medium); } .issue.low { border-left-color: var(--low); }
+    .badges { display: flex; gap: 6px; margin-bottom: 6px; }
+    .badge { font-size: .7rem; font-weight: 700; text-transform: uppercase; letter-spacing: .04em; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); color: var(--muted); }
+    .badge.high { background: var(--high-bg); color: var(--high); } .badge.medium { background: var(--medium-bg); color: var(--medium); } .badge.low { background: var(--low-bg); color: var(--low); }
+    .issue p { font-size: .9rem; }
+    .suggestion { margin-top: 6px; color: var(--muted); font-size: .85rem !important; }
+    .suggestion strong { color: var(--text); font-weight: 600; }
+    .strengths { list-style: none; display: flex; flex-direction: column; gap: 6px; }
+    .strengths li { font-size: .9rem; padding-left: 22px; position: relative; }
+    .strengths li::before { content: "✓"; position: absolute; left: 2px; color: var(--ok); font-weight: 700; }
+    .empty { color: var(--muted); font-size: .9rem; }
+    footer { margin-top: 40px; text-align: center; color: var(--faint); font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <a class="back" href="/">← Bifrost dashboard</a>
+    <header>
+      <h1>Code Reviewer</h1>
+      <p class="tagline">Paste code and get a senior-engineer style review: a score, prioritised issues and concrete fixes.</p>
+    </header>
+
+    <section class="panel">
+      <div class="row">
+        <div>
+          <label for="language">Language</label>
+          <select id="language">
+            <option value="python">Python</option>
+            <option value="javascript">JavaScript</option>
+            <option value="typescript">TypeScript</option>
+            <option value="go">Go</option>
+            <option value="rust">Rust</option>
+            <option value="java">Java</option>
+            <option value="csharp">C#</option>
+            <option value="cpp">C++</option>
+            <option value="sql">SQL</option>
+            <option value="bash">Bash</option>
+            <option value="text">Other</option>
+          </select>
+        </div>
+        <span class="counter" id="counter">0 / 10,000</span>
+      </div>
+      <textarea id="code" spellcheck="false" aria-label="Code to review" placeholder="def add(a, b):&#10;    return a - b"></textarea>
+      <div class="submit">
+        <button id="reviewBtn" type="button">Review code</button>
+        <button id="sampleBtn" type="button" class="ghost">Try a sample</button>
+        <span class="hint"><kbd>⌘</kbd> / <kbd>Ctrl</kbd> + <kbd>Enter</kbd> to review</span>
+      </div>
+      <div class="error" id="error" role="alert"></div>
+      <div class="spinner" id="spinner">Reviewing… this usually takes a few seconds.</div>
+    </section>
+
+    <section id="results" aria-live="polite">
+      <div class="panel overview">
+        <div class="score" id="score"><div class="score-inner"><div><div class="score-num" id="scoreNum"></div><div class="score-of">/ 10</div></div></div></div>
+        <div class="overview-text">
+          <p class="recommendation" id="recommendation"></p>
+          <p class="summary" id="summary"></p>
+        </div>
+      </div>
+      <div class="panel">
+        <h2>Issues <span class="count" id="issueCount"></span></h2>
+        <ul class="issues" id="issues"></ul>
+      </div>
+      <div class="panel">
+        <h2>Strengths</h2>
+        <ul class="strengths" id="strengths"></ul>
+      </div>
+    </section>
+
+    <footer>Part of <a href="/">Bifrost</a> · <a href="/code-review/docs">API docs</a></footer>
+  </div>
+
+<script>
+  const MAX_CHARS = 10000;
+  const SEVERITY_ORDER = { high: 0, medium: 1, low: 2 };
+  const SAMPLE = `import sqlite3
+
+def get_user(db_path, username):
+    conn = sqlite3.connect(db_path)
+    query = "SELECT * FROM users WHERE name = '" + username + "'"
+    rows = conn.execute(query).fetchall()
+    return rows[0]
+
+def average(nums):
+    total = 0
+    for n in nums:
+        total += n
+    return total / len(nums)
+`;
+
+  const $ = id => document.getElementById(id);
+  const code = $('code'), language = $('language'), reviewBtn = $('reviewBtn');
+
+  // Model output is rendered with textContent only — never parsed as HTML
+  function el(tag, cls, text) {
+    const node = document.createElement(tag);
+    if (cls) node.className = cls;
+    if (text != null) node.textContent = text;
+    return node;
+  }
+
+  function updateCounter() {
+    const n = code.value.length;
+    $('counter').textContent = `${n.toLocaleString()} / ${MAX_CHARS.toLocaleString()}`;
+    $('counter').classList.toggle('over', n > MAX_CHARS);
+  }
+
+  function showError(message) {
+    $('error').textContent = message;
+    $('error').classList.add('show');
+  }
+
+  function scoreColor(score) {
+    if (score >= 8) return 'var(--ok)';
+    if (score >= 5) return 'var(--medium)';
+    return 'var(--high)';
+  }
+
+  function render(data) {
+    const score = Math.max(0, Math.min(10, Number(data.score) || 0));
+    $('score').style.background = `conic-gradient(${scoreColor(score)} ${score * 10}%, var(--surface-2) 0)`;
+    $('scoreNum').textContent = score;
+    $('recommendation').textContent = data.recommendation;
+    $('summary').textContent = data.summary;
+
+    const issues = [...data.issues].sort((a, b) => (SEVERITY_ORDER[a.severity] ?? 3) - (SEVERITY_ORDER[b.severity] ?? 3));
+    $('issueCount').textContent = issues.length ? `${issues.length} found` : '';
+    $('issues').replaceChildren(...(issues.length ? issues.map(issue => {
+      const severity = ['high', 'medium', 'low'].includes(issue.severity) ? issue.severity : '';
+      const item = el('li', `issue ${severity}`);
+      const badges = el('div', 'badges');
+      badges.append(el('span', `badge ${severity}`, issue.severity), el('span', 'badge', issue.type));
+      const suggestion = el('p', 'suggestion');
+      suggestion.append(el('strong', null, 'Fix: '), document.createTextNode(issue.suggestion));
+      item.append(badges, el('p', null, issue.description), suggestion);
+      return item;
+    }) : [el('li', 'empty', 'No issues found — nice work.')]));
+
+    $('strengths').replaceChildren(...(data.strengths.length
+      ? data.strengths.map(s => el('li', null, s))
+      : [el('li', 'empty', 'None noted.')]));
+
+    $('results').classList.add('show');
+    $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  async function review() {
+    $('error').classList.remove('show');
+    if (!code.value.trim()) return showError('Paste some code to review.');
+    if (code.value.length > MAX_CHARS) return showError(`Code is over the ${MAX_CHARS.toLocaleString()} character limit.`);
+
+    reviewBtn.disabled = true;
+    $('spinner').classList.add('show');
+    $('results').classList.remove('show');
+    try {
+      const res = await fetch('/code-review', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ code: code.value, language: language.value }),
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Review failed (${res.status})`);
+      render(data);
+    } catch (err) {
+      showError(err.message);
+    } finally {
+      reviewBtn.disabled = false;
+      $('spinner').classList.remove('show');
+    }
+  }
+
+  code.addEventListener('input', updateCounter);
+  code.addEventListener('keydown', e => {
+    if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') { e.preventDefault(); review(); }
+  });
+  reviewBtn.addEventListener('click', review);
+  $('sampleBtn').addEventListener('click', () => { code.value = SAMPLE; language.value = 'python'; updateCounter(); code.focus(); });
+  updateCounter();
+</script>
+</body>
+</html>

@@ -148,10 +148,14 @@ def parse_endpoints(spec: dict) -> list[Endpoint]:
 
 
 def find_ui_path(spec: dict, prefix: str) -> str | None:
-    """An app's own HTML page, if it serves one at its prefix (e.g. the Resume Analyzer UI)."""
-    op = spec.get("paths", {}).get(prefix, {}).get("get", {})
-    content = op.get("responses", {}).get("200", {}).get("content", {})
-    return prefix if "text/html" in content else None
+    """The app's own HTML page — the shortest GET route under its prefix that returns text/html."""
+    pages = [
+        path
+        for path, operations in spec.get("paths", {}).items()
+        if (path == prefix or path.startswith(f"{prefix}/"))
+        and "text/html" in operations.get("get", {}).get("responses", {}).get("200", {}).get("content", {})
+    ]
+    return min(pages, key=len) if pages else None
 
 
 def http_client(base_url: str) -> httpx.AsyncClient:
