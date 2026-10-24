@@ -267,6 +267,7 @@
     }
     const avatar = el('img', { alt: '' });
     if (user.avatar_url && user.avatar_url.startsWith('https://')) avatar.src = user.avatar_url;
+    const settings = el('a', { href: '/settings', text: 'Settings' });
     const signOut = el('button', { type: 'button', text: 'Sign out' });
     signOut.addEventListener('click', async () => {
       await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
@@ -275,6 +276,7 @@
     account.replaceChildren(
       avatar,
       el('span', { class: 'who' }, [document.createTextNode(user.name || user.login), el('small', { text: `@${user.login}` })]),
+      settings,
       signOut);
   }
 

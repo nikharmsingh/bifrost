@@ -153,6 +153,7 @@ name = "bifrost-auth"
 version = "0.1.0"
 source = { editable = "packages/auth" }
 dependencies = [
+    { name = "cryptography" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "sqlalchemy" },
@@ -160,6 +161,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "cryptography", specifier = ">=43" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "sqlalchemy", specifier = ">=2.0" },
@@ -453,15 +455,21 @@ name = "code-reviewer"
 version = "0.1.0"
 source = { virtual = "apps/code-reviewer" }
 dependencies = [
+    { name = "bifrost-auth" },
     { name = "fastapi" },
     { name = "groq" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "bifrost-auth", editable = "packages/auth" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "groq", specifier = ">=0.11" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
@@ -2076,25 +2084,29 @@ name = "resume-analyzer"
 version = "0.1.0"
 source = { virtual = "apps/resume-analyzer" }
 dependencies = [
-    { name = "anthropic" },
     { name = "beautifulsoup4" },
+    { name = "bifrost-auth" },
     { name = "fastapi" },
     { name = "groq" },
     { name = "httpx" },
+    { name = "psycopg", extra = ["binary"] },
     { name = "pypdf" },
     { name = "python-multipart" },
+    { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
-    { name = "anthropic", specifier = ">=0.25" },
     { name = "beautifulsoup4", specifier = ">=4.12" },
+    { name = "bifrost-auth", editable = "packages/auth" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "groq", specifier = ">=0.11" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
     { name = "pypdf", specifier = ">=4.0" },
     { name = "python-multipart", specifier = ">=0.0.9" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 

@@ -1,16 +1,36 @@
 import json
 import os
 import pathlib
+import sys
 
-from fastapi import FastAPI, HTTPException
+import sqlalchemy as sa
+from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
-from groq import APIError, Groq
+from groq import APIError, AuthenticationError, Groq
 from pydantic import BaseModel
+from sqlalchemy.pool import NullPool
+
+# Vercel installs from requirements.txt, not the uv workspace, so load the shared auth package from the repo
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "packages" / "auth" / "src"))
+from bifrost_auth import Auth  # noqa: E402
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+# NullPool is required for serverless — Neon handles pooling via PgBouncer
+engine = sa.create_engine(DATABASE_URL, poolclass=NullPool) if DATABASE_URL else None
+
+
+def require_db() -> sa.Engine:
+    if not engine:
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return engine
+
+
+auth = Auth(require_db)
 
 app = FastAPI(
     title="Code Reviewer",
-    description="AI code review that returns a score, issues and suggestions as structured JSON (Groq).",
+    description="AI code review that returns a score, issues and suggestions as structured JSON. Uses your own Groq key.",
     version="0.1.0",
     docs_url="/code-review/docs",
     openapi_url="/code-review/openapi.json",
@@ -18,20 +38,8 @@ app = FastAPI(
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
-_client: Groq | None = None
-
 # Groq retires models periodically (llama-3.3-70b-versatile was shut down 2026-08-16) — override without a deploy
 GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
-
-
-def get_client() -> Groq:
-    global _client
-    if _client is None:
-        api_key = os.getenv("GROQ_API_KEY", "")
-        if not api_key:
-            raise HTTPException(status_code=500, detail="GROQ_API_KEY is not set")
-        _client = Groq(api_key=api_key)
-    return _client
 
 
 SYSTEM_PROMPT = """\
@@ -110,7 +118,7 @@ async def health() -> dict:
 
 
 @app.post("/code-review", response_model=ReviewResponse)
-def review_code(req: ReviewRequest) -> dict:
+def review_code(req: ReviewRequest, groq_key: str = Depends(auth.require_key("groq"))) -> dict:
     if not req.code.strip():
         raise HTTPException(status_code=400, detail="code must not be empty")
 
@@ -118,7 +126,8 @@ def review_code(req: ReviewRequest) -> dict:
         raise HTTPException(status_code=400, detail="code exceeds 10,000 character limit")
 
     try:
-        response = get_client().chat.completions.create(
+        # The signed-in user's own key — the server never spends its own Groq quota
+        response = Groq(api_key=groq_key).chat.completions.create(
             model=GROQ_MODEL,
             # Headroom for reasoning tokens, which count toward the limit on reasoning models
             max_tokens=4096,
@@ -128,6 +137,10 @@ def review_code(req: ReviewRequest) -> dict:
             ],
             response_format={"type": "json_object"},
         )
+    except AuthenticationError:
+        raise HTTPException(
+            status_code=400, detail="Groq rejected your saved key — update it in Settings (/settings)"
+        ) from None
     except APIError as exc:
         raise HTTPException(status_code=502, detail=f"Review model unavailable: {exc.message}") from exc
 

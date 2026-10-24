@@ -20,11 +20,13 @@
 
 | App | UI | What it does | Access |
 |---|---|---|---|
-| **Code Reviewer** | [`/code-review`](https://bifrost-api.vercel.app/code-review) | Paste code → score, severity-sorted issues with fixes, strengths (Groq) | Public |
-| **Resume Analyzer** | [`/resume-analyzer`](https://bifrost-api.vercel.app/resume-analyzer) | PDF resume + job URL → match score, gaps, keywords (Claude, Groq fallback) | Public |
+| **Code Reviewer** | [`/code-review`](https://bifrost-api.vercel.app/code-review) | Paste code → score, severity-sorted issues with fixes, strengths | Sign-in + your Groq key |
+| **Resume Analyzer** | [`/resume-analyzer`](https://bifrost-api.vercel.app/resume-analyzer) | PDF resume + job URL → match score, gaps, keywords | Sign-in + your Groq key |
 | **Notes** | [`/notes/ui`](https://bifrost-api.vercel.app/notes/ui) | Private notes in Neon Postgres | GitHub sign-in |
 
 **One sign-in for every app:** sign in once (dashboard or any app) via GitHub at `/auth/login`; the `bifrost_session` cookie covers the whole site.
+
+**Bring your own key:** the AI apps run on each user's own Groq key, saved once in [`/settings`](https://bifrost-api.vercel.app/settings) — checked with Groq, then stored AES-GCM-encrypted and never shown again. The server's own LLM keys are never used for visitors.
 
 Each app's API docs are at `<path>/docs`, e.g. [`/code-review/docs`](https://bifrost-api.vercel.app/code-review/docs).
 
@@ -111,9 +113,8 @@ All settings are environment variables — see [`.env.example`](.env.example) fo
 
 | App | Needs |
 |---|---|
-| Code Reviewer | `GROQ_API_KEY` (optional `GROQ_MODEL`) |
-| Resume Analyzer | `ANTHROPIC_API_KEY` and/or `GROQ_API_KEY` |
-| Sign-in (hello-api + any app using it) | `DATABASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET`; GitHub OAuth callback `https://<host>/auth/callback` |
+| Code Reviewer, Resume Analyzer | Sign-in settings + `KEY_ENCRYPTION_SECRET` (users supply their own Groq key; optional `GROQ_MODEL`) |
+| Sign-in (every app using it) | `DATABASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET`; GitHub OAuth callback `https://<host>/auth/callback` |
 | Notes | the sign-in settings, plus `NOTES_OWNER_GITHUB_LOGIN` |
 
 ## Releases

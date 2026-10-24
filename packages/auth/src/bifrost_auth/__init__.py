@@ -21,7 +21,22 @@ import sqlalchemy as sa
 from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from fastapi.responses import RedirectResponse, Response
 from fastapi.security import APIKeyCookie
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
+
+from . import keys
+from ._schema import metadata, user_keys_table, users_table
+
+__all__ = [
+    "SESSION_COOKIE",
+    "Auth",
+    "User",
+    "keys",
+    "metadata",
+    "sign",
+    "unsign",
+    "user_keys_table",
+    "users_table",
+]
 
 SESSION_COOKIE = "bifrost_session"
 STATE_COOKIE = "bifrost_oauth_state"
@@ -29,18 +44,6 @@ SESSION_TTL_SECONDS = 30 * 24 * 3600
 STATE_TTL_SECONDS = 600
 # Same-site paths only, so ?next= can't send someone to another site after sign-in
 _SAFE_NEXT = re.compile(r"^/(?!/)[A-Za-z0-9/_\-.?=&%]*$")
-
-metadata = sa.MetaData()
-users_table = sa.Table(
-    "users",
-    metadata,
-    sa.Column("id", sa.String, primary_key=True),
-    sa.Column("github_id", sa.BigInteger, nullable=False, unique=True),
-    sa.Column("login", sa.String, nullable=False),
-    sa.Column("name", sa.String),
-    sa.Column("avatar_url", sa.String),
-    sa.Column("created_at", sa.String, nullable=False),
-)
 
 session_scheme = APIKeyCookie(name=SESSION_COOKIE, auto_error=False, description="Bifrost session from GitHub sign-in")
 
@@ -50,6 +53,19 @@ class User(BaseModel):
     login: str
     name: str | None
     avatar_url: str | None
+
+
+class KeyIn(BaseModel):
+    api_key: str = Field(min_length=20, max_length=256, pattern=r"^\S+$")
+
+
+class KeyStatus(BaseModel):
+    provider: str
+    label: str
+    console_url: str
+    configured: bool
+    last4: str | None
+    updated_at: str | None
 
 
 # Settings are read per call so tests (and env changes) don't need a reimport
@@ -124,6 +140,7 @@ class Auth:
 
     def __init__(self, get_engine: Callable[[], sa.Engine]) -> None:
         self._get_engine = get_engine
+        self._key_dependencies: dict[str, Callable[..., str]] = {}
 
     def create_tables(self) -> None:
         metadata.create_all(self._get_engine())
@@ -144,6 +161,47 @@ class Auth:
         if not user:
             raise HTTPException(status_code=401, detail="Sign in with GitHub to continue")
         return user
+
+    # ── bring-your-own provider keys ──────────────────────────────────────────
+
+    def provider_key(self, user: dict, provider_name: str) -> str:
+        """The user's decrypted key for `provider_name`, or 428 telling them to add one in Settings."""
+        p = keys.provider(provider_name)
+        with self._get_engine().connect() as conn:
+            row = keys.load(conn, user["id"], provider_name)
+        if not row:
+            raise HTTPException(
+                status_code=428, detail=f"Add your {p.label} API key in Settings (/settings) to use this"
+            )
+        return keys.decrypt(user["id"], provider_name, row["ciphertext"])
+
+    def require_key(self, provider_name: str) -> Callable[..., str]:
+        """Dependency: sign-in required, then the user's own key for `provider_name`.
+
+        Cached per provider so the same callable can be targeted by app.dependency_overrides.
+        """
+        if provider_name not in self._key_dependencies:
+
+            def dependency(user: dict = Depends(self.current_user)) -> str:
+                return self.provider_key(user, provider_name)
+
+            self._key_dependencies[provider_name] = dependency
+        return self._key_dependencies[provider_name]
+
+    def key_status(self, user: dict) -> list[dict]:
+        with self._get_engine().connect() as conn:
+            rows = {name: keys.load(conn, user["id"], name) for name in keys.PROVIDERS}
+        return [
+            {
+                "provider": p.name,
+                "label": p.label,
+                "console_url": p.console_url,
+                "configured": rows[p.name] is not None,
+                "last4": rows[p.name]["last4"] if rows[p.name] else None,
+                "updated_at": rows[p.name]["updated_at"] if rows[p.name] else None,
+            }
+            for p in keys.PROVIDERS.values()
+        ]
 
     def upsert_github_user(self, profile: dict) -> dict:
         fields = {"login": profile["login"], "name": profile.get("name"), "avatar_url": profile.get("avatar_url")}
@@ -209,5 +267,24 @@ class Auth:
         @router.get("/me", response_model=User, summary="The signed-in user")
         def me(user: dict = Depends(self.current_user)) -> dict:
             return user
+
+        @router.get("/keys", response_model=list[KeyStatus], summary="Which provider keys you've saved")
+        def list_keys(user: dict = Depends(self.current_user)) -> list[dict]:
+            return self.key_status(user)
+
+        @router.put("/keys/{provider_name}", response_model=KeyStatus, summary="Save or replace your provider key")
+        def save_key(provider_name: str, body: KeyIn, user: dict = Depends(self.current_user)) -> dict:
+            keys.provider(provider_name)
+            keys.validate_with_provider(provider_name, body.api_key)
+            with self._get_engine().begin() as conn:
+                keys.save(conn, user["id"], provider_name, body.api_key)
+            return next(s for s in self.key_status(user) if s["provider"] == provider_name)
+
+        @router.delete("/keys/{provider_name}", status_code=204, summary="Remove your provider key")
+        def delete_key(provider_name: str, user: dict = Depends(self.current_user)) -> None:
+            keys.provider(provider_name)
+            with self._get_engine().begin() as conn:
+                if not keys.remove(conn, user["id"], provider_name):
+                    raise HTTPException(status_code=404, detail="No saved key to remove")
 
         return router
