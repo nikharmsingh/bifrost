@@ -1,4 +1,5 @@
 """One-off script — run with: uv run scripts/seed_db.py"""
+
 import sys
 from pathlib import Path
 

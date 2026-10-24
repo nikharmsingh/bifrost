@@ -1,6 +1,7 @@
-from langgraph.graph import StateGraph, END
-from .state import ResearchState
+from langgraph.graph import END, StateGraph
+
 from .nodes import researcher, synthesizer
+from .state import ResearchState
 
 builder = StateGraph(ResearchState)
 

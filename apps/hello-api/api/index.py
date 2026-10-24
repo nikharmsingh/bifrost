@@ -1,9 +1,12 @@
 import pathlib
 import random
 import uuid
-from datetime import datetime, timezone
+from datetime import UTC, datetime
 
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
+from pydantic import BaseModel
 
 
 def _read_version() -> str:
@@ -11,9 +14,7 @@ def _read_version() -> str:
         return (pathlib.Path(__file__).parents[3] / "VERSION").read_text().strip()
     except (FileNotFoundError, IndexError):
         return "dev"
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
-from pydantic import BaseModel
+
 
 app = FastAPI(
     title="Hello API",
@@ -33,7 +34,11 @@ app.add_middleware(
 QUOTES: list[dict] = [
     {"id": 1, "text": "Code is like humor. When you have to explain it, it's bad.", "author": "Cory House"},
     {"id": 2, "text": "First, solve the problem. Then, write the code.", "author": "John Johnson"},
-    {"id": 3, "text": "Any fool can write code that a computer can understand. Good programmers write code that humans can understand.", "author": "Martin Fowler"},
+    {
+        "id": 3,
+        "text": "Any fool can write code that a computer can understand. Good programmers write code that humans can understand.",
+        "author": "Martin Fowler",
+    },
     {"id": 4, "text": "Make it work, make it right, make it fast.", "author": "Kent Beck"},
     {"id": 5, "text": "The best code is no code at all.", "author": "Jeff Atwood"},
 ]
@@ -152,7 +157,7 @@ async def root() -> str:
 
 @app.get("/health")
 async def health() -> dict:
-    return {"status": "ok", "time": datetime.now(timezone.utc).isoformat()}
+    return {"status": "ok", "time": datetime.now(UTC).isoformat()}
 
 
 @app.get("/quotes", response_model=list[Quote])
@@ -180,7 +185,7 @@ async def generate_uuid() -> dict:
 
 @app.get("/utils/timestamp")
 async def timestamp() -> dict:
-    now = datetime.now(timezone.utc)
+    now = datetime.now(UTC)
     return {
         "iso": now.isoformat(),
         "unix": int(now.timestamp()),

@@ -1,12 +1,16 @@
+import asyncio
 import io
+import ipaddress
 import json
 import os
+from urllib.parse import urljoin, urlparse
 
 import anthropic
 import httpx
 import pypdf
 from bs4 import BeautifulSoup
 from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from groq import Groq
@@ -25,6 +29,7 @@ app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_methods
 MAX_RESUME_CHARS = 5_000
 MAX_JOB_CHARS = 5_000
 MAX_PDF_BYTES = 4 * 1024 * 1024  # 4 MB
+MAX_REDIRECTS = 5
 
 ANALYSIS_TOOL = {
     "name": "submit_analysis",
@@ -109,6 +114,20 @@ def extract_pdf_text(data: bytes) -> str:
     return "\n".join(pages).strip()
 
 
+async def assert_public_url(url: str) -> None:
+    """Reject non-http(s) URLs and hosts that resolve to private/internal addresses (SSRF guard)."""
+    parsed = urlparse(url)
+    if parsed.scheme not in ("http", "https") or not parsed.hostname:
+        raise HTTPException(status_code=422, detail="Job posting URL must be an http(s) URL")
+    try:
+        infos = await asyncio.get_running_loop().getaddrinfo(parsed.hostname, parsed.port or None)
+    except OSError:
+        raise HTTPException(status_code=422, detail="Could not resolve job posting host") from None
+    for info in infos:
+        if not ipaddress.ip_address(info[4][0]).is_global:
+            raise HTTPException(status_code=422, detail="Job posting URL must point to a public host")
+
+
 async def fetch_job_posting(url: str) -> str:
     headers = {
         "User-Agent": (
@@ -118,15 +137,25 @@ async def fetch_job_posting(url: str) -> str:
         "Accept": "text/html,application/xhtml+xml",
     }
     try:
-        async with httpx.AsyncClient(timeout=10, follow_redirects=True) as client:
-            response = await client.get(url, headers=headers)
+        # Follow redirects manually so every hop is checked against the SSRF guard
+        async with httpx.AsyncClient(timeout=10, follow_redirects=False) as client:
+            for _ in range(MAX_REDIRECTS + 1):
+                await assert_public_url(url)
+                response = await client.get(url, headers=headers)
+                if not response.is_redirect:
+                    break
+                url = urljoin(url, response.headers["location"])
+            else:
+                raise HTTPException(status_code=422, detail="Job posting URL redirected too many times")
             response.raise_for_status()
+    except HTTPException:
+        raise
     except httpx.TimeoutException:
-        raise HTTPException(status_code=422, detail="Job posting URL timed out")
+        raise HTTPException(status_code=422, detail="Job posting URL timed out") from None
     except httpx.HTTPStatusError as exc:
-        raise HTTPException(status_code=422, detail=f"Job posting URL returned {exc.response.status_code}")
+        raise HTTPException(status_code=422, detail=f"Job posting URL returned {exc.response.status_code}") from exc
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Could not fetch job posting: {exc}")
+        raise HTTPException(status_code=422, detail=f"Could not fetch job posting: {exc}") from exc
 
     soup = BeautifulSoup(response.text, "html.parser")
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
@@ -138,7 +167,7 @@ def _analyze_anthropic(content: str) -> dict:
     api_key = os.getenv("ANTHROPIC_API_KEY", "")
     client = anthropic.Anthropic(api_key=api_key)
     message = client.messages.create(
-        model="claude-sonnet-4-6",
+        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
         max_tokens=1024,
         system=ANTHROPIC_SYSTEM,
         tools=[ANALYSIS_TOOL],
@@ -166,7 +195,7 @@ def _analyze_groq(content: str) -> dict:
     try:
         return json.loads(response.choices[0].message.content)
     except (json.JSONDecodeError, IndexError):
-        raise HTTPException(status_code=500, detail="Groq model returned an unexpected response format")
+        raise HTTPException(status_code=500, detail="Groq model returned an unexpected response format") from None
 
 
 def _run_analysis(content: str) -> dict:
@@ -353,14 +382,23 @@ async def ui() -> str:
     return '#f87171';
   }
 
-  function renderList(id, items) {
+  // Model output is derived from untrusted job pages — build nodes with textContent, never innerHTML
+  function renderItems(id, items, tagName, className) {
     const el = document.getElementById(id);
-    el.innerHTML = items.map(t => `<li>${t}</li>`).join('');
+    el.replaceChildren(...items.map(t => {
+      const node = document.createElement(tagName);
+      if (className) node.className = className;
+      node.textContent = t;
+      return node;
+    }));
+  }
+
+  function renderList(id, items) {
+    renderItems(id, items, 'li');
   }
 
   function renderTags(id, items, cls) {
-    const el = document.getElementById(id);
-    el.innerHTML = items.map(t => `<span class="tag ${cls}">${t}</span>`).join('');
+    renderItems(id, items, 'span', `tag ${cls}`);
   }
 
   async function analyze() {
@@ -431,7 +469,7 @@ async def analyze(
     try:
         resume_text = extract_pdf_text(pdf_bytes)
     except Exception as exc:
-        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}")
+        raise HTTPException(status_code=422, detail=f"Could not parse PDF: {exc}") from exc
 
     if not resume_text.strip():
         raise HTTPException(status_code=422, detail="No text could be extracted from the PDF (scanned image?)")
@@ -442,8 +480,5 @@ async def analyze(
         raise HTTPException(status_code=422, detail="No readable text found at the job posting URL")
 
     # ── run analysis (Anthropic preferred, Groq fallback) ────────────────────
-    content = (
-        f"## Resume\n\n{resume_text[:MAX_RESUME_CHARS]}\n\n"
-        f"## Job Posting\n\n{job_text[:MAX_JOB_CHARS]}"
-    )
-    return _run_analysis(content)
+    content = f"## Resume\n\n{resume_text[:MAX_RESUME_CHARS]}\n\n## Job Posting\n\n{job_text[:MAX_JOB_CHARS]}"
+    return await run_in_threadpool(_run_analysis, content)
