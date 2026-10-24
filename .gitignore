@@ -15,13 +15,19 @@ build/
 venv/
 env/
 
-# uv
+# uv (uv.lock is intentionally committed — Dockerfiles and CI sync from it)
 .uv/
 
 # Env files
 .env
 .env.local
 .env.*.local
+
+# Vercel CLI (project/org link, local build output)
+.vercel/
+
+# Claude Code — personal settings (shared .claude/settings.json stays tracked)
+.claude/settings.local.json
 
 # IDE
 .vscode/
@@ -37,9 +43,18 @@ Thumbs.db
 *.log
 logs/
 
-# Testing
+# Testing / tooling caches
 .pytest_cache/
 .coverage
+.coverage.*
 htmlcov/
 .mypy_cache/
 .ruff_cache/
+.pyright/
+.tox/
+.nox/
+
+# Local databases & notebooks
+*.db
+*.sqlite3
+.ipynb_checkpoints/
