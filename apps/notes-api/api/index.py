@@ -14,7 +14,7 @@ import sqlalchemy as sa
 from fastapi import Depends, FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, Response
-from fastapi.security import APIKeyCookie, HTTPAuthorizationCredentials, HTTPBearer
+from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine
 from sqlalchemy.pool import NullPool
@@ -31,7 +31,6 @@ SESSION_COOKIE = "notes_session"
 STATE_COOKIE = "notes_oauth_state"
 SESSION_TTL_SECONDS = 30 * 24 * 3600
 STATE_TTL_SECONDS = 600
-TOKEN_PREFIX = "bnt_"
 UI_PATH = "/notes/ui"
 
 # NullPool is required for serverless — Neon handles pooling via PgBouncer
@@ -58,18 +57,6 @@ notes_table = sa.Table(
     sa.Column("created_at", sa.String, nullable=False),
     sa.Column("updated_at", sa.String, nullable=False),
 )
-tokens_table = sa.Table(
-    "api_tokens",
-    metadata,
-    sa.Column("id", sa.String, primary_key=True),
-    sa.Column("user_id", sa.String, nullable=False, index=True),
-    sa.Column("name", sa.String, nullable=False),
-    # Only a SHA-256 hash is stored; the plaintext token is shown once at creation
-    sa.Column("token_hash", sa.String, nullable=False, unique=True),
-    sa.Column("display_prefix", sa.String, nullable=False),
-    sa.Column("created_at", sa.String, nullable=False),
-    sa.Column("last_used_at", sa.String),
-)
 
 
 def migrate(db: sa.Engine) -> None:
@@ -91,7 +78,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Notes API",
-    description="Private notes stored in Neon Postgres. Sign in with GitHub, or use a personal API token.",
+    description="Private notes stored in Neon Postgres. Sign in with GitHub to read and write your own notes.",
     version="0.3.0",
     docs_url="/notes/docs",
     openapi_url="/notes/openapi.json",
@@ -101,7 +88,6 @@ app = FastAPI(
 _allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_methods=["*"], allow_headers=["*"])
 
-bearer_scheme = HTTPBearer(auto_error=False, description="Personal API token (bnt_…)")
 session_scheme = APIKeyCookie(name=SESSION_COOKIE, auto_error=False, description="Browser session from GitHub sign-in")
 
 
@@ -159,45 +145,17 @@ class User(BaseModel):
     avatar_url: str | None
 
 
-def hash_token(token: str) -> str:
-    return hashlib.sha256(token.encode()).hexdigest()
-
-
 def _user_by_id(conn: sa.Connection, user_id: str) -> dict | None:
     row = conn.execute(sa.select(users_table).where(users_table.c.id == user_id)).mappings().first()
     return dict(row) if row else None
 
 
-def current_user(
-    bearer: HTTPAuthorizationCredentials | None = Depends(bearer_scheme),
-    session: str | None = Depends(session_scheme),
-) -> dict:
-    with require_db().connect() as conn:
-        if bearer:
-            token = conn.execute(
-                sa.select(tokens_table).where(tokens_table.c.token_hash == hash_token(bearer.credentials))
-            ).first()
-            if not token:
-                raise HTTPException(status_code=401, detail="Invalid or revoked API token")
-            conn.execute(sa.update(tokens_table).where(tokens_table.c.id == token.id).values(last_used_at=now_iso()))
-            conn.commit()
-            user = _user_by_id(conn, token.user_id)
-        elif session and (user_id := _unsign(session, SESSION_TTL_SECONDS)):
-            user = _user_by_id(conn, user_id)
-        else:
-            user = None
-    if not user:
-        raise HTTPException(status_code=401, detail="Sign in with GitHub or send an API token")
-    return user
-
-
-def session_user(session: str | None = Depends(session_scheme)) -> dict:
-    """Token management needs a real browser session — an API token can't mint or revoke tokens."""
+def current_user(session: str | None = Depends(session_scheme)) -> dict:
     user_id = _unsign(session, SESSION_TTL_SECONDS) if session else None
     with require_db().connect() as conn:
         user = _user_by_id(conn, user_id) if user_id else None
     if not user:
-        raise HTTPException(status_code=401, detail="Sign in with GitHub to manage API tokens")
+        raise HTTPException(status_code=401, detail="Sign in with GitHub to access your notes")
     return user
 
 
@@ -307,22 +265,6 @@ class Note(BaseModel):
     updated_at: str
 
 
-class TokenIn(BaseModel):
-    name: str = Field(min_length=1, max_length=100)
-
-
-class TokenInfo(BaseModel):
-    id: str
-    name: str
-    display_prefix: str
-    created_at: str
-    last_used_at: str | None
-
-
-class NewToken(TokenInfo):
-    token: str = Field(description="Shown once — store it now; only a hash is kept")
-
-
 NOTE_COLUMNS = [c for c in notes_table.c if c.name != "owner_id"]
 
 
@@ -355,44 +297,6 @@ def health() -> dict:
 @app.get("/notes/me", response_model=User, summary="The signed-in user")
 def me(user: dict = Depends(current_user)) -> dict:
     return user
-
-
-@app.get("/notes/tokens", response_model=list[TokenInfo], summary="List your API tokens")
-def list_tokens(user: dict = Depends(session_user)) -> list[dict]:
-    with require_db().connect() as conn:
-        rows = conn.execute(
-            sa.select(tokens_table)
-            .where(tokens_table.c.user_id == user["id"])
-            .order_by(tokens_table.c.created_at.desc())
-        ).mappings()
-        return [dict(r) for r in rows]
-
-
-@app.post("/notes/tokens", response_model=NewToken, status_code=201, summary="Create an API token")
-def create_token(body: TokenIn, user: dict = Depends(session_user)) -> dict:
-    token = TOKEN_PREFIX + secrets.token_urlsafe(32)
-    record = {
-        "id": str(uuid4()),
-        "user_id": user["id"],
-        "name": body.name,
-        "token_hash": hash_token(token),
-        "display_prefix": token[: len(TOKEN_PREFIX) + 6],
-        "created_at": now_iso(),
-        "last_used_at": None,
-    }
-    with require_db().begin() as conn:
-        conn.execute(sa.insert(tokens_table).values(**record))
-    return {**record, "token": token}
-
-
-@app.delete("/notes/tokens/{token_id}", status_code=204, summary="Revoke an API token")
-def revoke_token(token_id: str, user: dict = Depends(session_user)) -> None:
-    with require_db().begin() as conn:
-        result = conn.execute(
-            sa.delete(tokens_table).where(tokens_table.c.id == token_id, tokens_table.c.user_id == user["id"])
-        )
-    if result.rowcount == 0:
-        raise HTTPException(status_code=404, detail="Token not found")
 
 
 # ── notes (always scoped to the caller) ────────────────────────────────────────
