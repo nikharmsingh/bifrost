@@ -1,4 +1,5 @@
 import asyncio
+import hmac
 import json
 import os
 import pathlib
@@ -7,12 +8,13 @@ import re
 import sys
 import time
 import uuid
+from collections import defaultdict
 from contextlib import asynccontextmanager
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 
 import httpx
 import sqlalchemy as sa
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import Depends, FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
@@ -49,6 +51,7 @@ def _read_version() -> str:
 async def lifespan(app: FastAPI):
     if engine:
         auth.create_tables()
+        status_metadata.create_all(engine)
     yield
 
 
@@ -278,6 +281,123 @@ async def build_registry(base_url: str) -> Registry:
     return registry
 
 
+# ── status history ─────────────────────────────────────────────────────────────
+# GitHub Actions POSTs /status/check every 10 minutes (Vercel Hobby cron only runs daily); each run records
+# every app's /health result, and GET /status turns the last 7 days into uptime and hourly buckets.
+
+STATUS_RETENTION_DAYS = 8
+status_metadata = sa.MetaData()
+health_checks_table = sa.Table(
+    "health_checks",
+    status_metadata,
+    sa.Column("id", sa.Integer, primary_key=True, autoincrement=True),
+    sa.Column("checked_at", sa.String, nullable=False, index=True),
+    sa.Column("slug", sa.String, nullable=False),
+    sa.Column("ok", sa.Boolean, nullable=False),
+    sa.Column("status_code", sa.Integer),
+    sa.Column("latency_ms", sa.Integer),
+)
+
+
+class HourBucket(BaseModel):
+    hour: str
+    checks: int
+    ok: int
+    avg_latency_ms: int | None
+
+
+class AppStatus(BaseModel):
+    slug: str
+    uptime_24h: float | None
+    uptime_7d: float | None
+    avg_latency_24h_ms: int | None
+    last_checked_at: str | None
+    last_ok: bool | None
+    hours: list[HourBucket]
+
+
+class StatusReport(BaseModel):
+    generated_at: str
+    apps: list[AppStatus]
+
+
+def require_status_secret(authorization: str = Header(default="")) -> None:
+    secret = os.getenv("STATUS_CHECK_SECRET", "")
+    if not secret:
+        raise HTTPException(status_code=503, detail="Status checks are not configured (STATUS_CHECK_SECRET)")
+    if not hmac.compare_digest(authorization, f"Bearer {secret}"):
+        raise HTTPException(status_code=401, detail="Invalid status check secret")
+
+
+async def record_health_checks(base_url: str, now: datetime | None = None) -> list[dict]:
+    now = now or datetime.now(UTC)
+    routes = load_routes()
+    async with http_client(base_url) as client:
+        results = await asyncio.gather(*(check_health(client, prefix) for _, prefix in routes))
+    rows = [
+        {"checked_at": now.isoformat(), "slug": slug, **result.model_dump()}
+        for (slug, _), result in zip(routes, results, strict=True)
+    ]
+    cutoff = (now - timedelta(days=STATUS_RETENTION_DAYS)).isoformat()
+    with require_db().begin() as conn:
+        conn.execute(sa.insert(health_checks_table), rows)
+        conn.execute(sa.delete(health_checks_table).where(health_checks_table.c.checked_at < cutoff))
+    return rows
+
+
+def _uptime(checks: list) -> float | None:
+    return round(100 * sum(c["ok"] for c in checks) / len(checks), 2) if checks else None
+
+
+def _avg_latency(checks: list) -> int | None:
+    latencies = [c["latency_ms"] for c in checks if c["ok"] and c["latency_ms"] is not None]
+    return round(sum(latencies) / len(latencies)) if latencies else None
+
+
+def build_status_report(now: datetime | None = None) -> StatusReport:
+    now = now or datetime.now(UTC)
+    since_7d, since_24h = (now - timedelta(days=7)).isoformat(), (now - timedelta(hours=24)).isoformat()
+    with require_db().connect() as conn:
+        rows = conn.execute(
+            sa.select(health_checks_table)
+            .where(health_checks_table.c.checked_at >= since_7d)
+            .order_by(health_checks_table.c.checked_at)
+        ).mappings()
+        by_slug: dict[str, list] = defaultdict(list)
+        for row in rows:
+            by_slug[row["slug"]].append(dict(row))
+
+    this_hour = now.replace(minute=0, second=0, microsecond=0)
+    hour_starts = [this_hour - timedelta(hours=23 - i) for i in range(24)]
+    apps = []
+    for slug, _ in load_routes():
+        checks = by_slug.get(slug, [])
+        recent = [c for c in checks if c["checked_at"] >= since_24h]
+        per_hour: dict[datetime, list] = defaultdict(list)
+        for c in recent:
+            per_hour[datetime.fromisoformat(c["checked_at"]).replace(minute=0, second=0, microsecond=0)].append(c)
+        apps.append(
+            AppStatus(
+                slug=slug,
+                uptime_24h=_uptime(recent),
+                uptime_7d=_uptime(checks),
+                avg_latency_24h_ms=_avg_latency(recent),
+                last_checked_at=checks[-1]["checked_at"] if checks else None,
+                last_ok=checks[-1]["ok"] if checks else None,
+                hours=[
+                    HourBucket(
+                        hour=start.isoformat(),
+                        checks=len(per_hour[start]),
+                        ok=sum(c["ok"] for c in per_hour[start]),
+                        avg_latency_ms=_avg_latency(per_hour[start]),
+                    )
+                    for start in hour_starts
+                ],
+            )
+        )
+    return StatusReport(generated_at=now.isoformat(), apps=apps)
+
+
 def _load_dashboard_html() -> str:
     try:
         return (pathlib.Path(__file__).parent / "dashboard.html").read_text()
@@ -313,6 +433,13 @@ REGISTRY_CACHE_HEADERS = {
 }
 
 
+# History changes every 10 minutes at most
+STATUS_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=0, must-revalidate",
+    "Vercel-CDN-Cache-Control": "max-age=60, stale-while-revalidate=600",
+}
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def root(response: Response) -> str:
     response.headers.update(PAGE_CACHE_HEADERS)
@@ -329,6 +456,22 @@ async def settings_page(response: Response) -> str:
 async def registry(request: Request, response: Response) -> Registry:
     response.headers.update(REGISTRY_CACHE_HEADERS)
     return await build_registry(resolve_base_url(request))
+
+
+@app.get("/status", response_model=StatusReport, summary="Uptime history (24 h and 7 d) for every app")
+def status_report(response: Response) -> StatusReport:
+    response.headers.update(STATUS_CACHE_HEADERS)
+    return build_status_report()
+
+
+@app.post(
+    "/status/check",
+    summary="Record a health check of every app (called by the scheduled workflow)",
+    dependencies=[Depends(require_status_secret)],
+)
+async def run_status_check(request: Request) -> dict:
+    rows = await record_health_checks(resolve_base_url(request))
+    return {"recorded": len(rows), "down": [r["slug"] for r in rows if not r["ok"]]}
 
 
 @app.get("/health")

@@ -12,7 +12,7 @@
       --bg: #0a0a0a; --surface: #141414; --surface-2: #1c1c1c; --border: #262626; --border-hover: #6366f1;
       --text: #e5e5e5; --muted: #8a8a8a; --faint: #525252;
       --accent: #818cf8; --accent-2: #a78bfa;
-      --ok: #4ade80; --ok-bg: rgba(74, 222, 128, .12); --bad: #f87171; --bad-bg: rgba(248, 113, 113, .12);
+      --ok: #4ade80; --ok-bg: rgba(74, 222, 128, .12); --bad: #f87171; --bad-bg: rgba(248, 113, 113, .12); --warn: #fbbf24;
       --get: #60a5fa; --post: #4ade80; --put: #fbbf24; --patch: #c084fc; --delete: #f87171;
     }
     @media (prefers-color-scheme: light) {
@@ -20,7 +20,7 @@
         --bg: #fafafa; --surface: #ffffff; --surface-2: #f4f4f5; --border: #e4e4e7; --border-hover: #6366f1;
         --text: #18181b; --muted: #52525b; --faint: #a1a1aa;
         --accent: #4f46e5; --accent-2: #7c3aed;
-        --ok: #15803d; --ok-bg: rgba(21, 128, 61, .1); --bad: #b91c1c; --bad-bg: rgba(185, 28, 28, .1);
+        --ok: #15803d; --ok-bg: rgba(21, 128, 61, .1); --bad: #b91c1c; --bad-bg: rgba(185, 28, 28, .1); --warn: #d97706;
         --get: #2563eb; --post: #15803d; --put: #b45309; --patch: #7e22ce; --delete: #b91c1c;
       }
     }
@@ -68,6 +68,13 @@
     .status.ok { color: var(--ok); background: var(--ok-bg); }
     .status.bad { color: var(--bad); background: var(--bad-bg); }
     .desc { color: var(--muted); font-size: .9rem; }
+    .uptime { display: flex; flex-direction: column; gap: 6px; }
+    .uptime-head { display: flex; flex-wrap: wrap; gap: 4px 12px; font-size: .8rem; color: var(--muted); }
+    .uptime-head strong { color: var(--text); font-variant-numeric: tabular-nums; }
+    .bars { display: flex; gap: 2px; height: 22px; }
+    .bar { flex: 1; border-radius: 2px; background: var(--surface-2); }
+    .bar.up { background: var(--ok); } .bar.partial { background: var(--warn); } .bar.down { background: var(--bad); }
+    .bars-legend { display: flex; justify-content: space-between; font-size: .7rem; color: var(--faint); }
     .facts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .8rem; color: var(--muted); }
     .facts code { color: var(--text); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
     .actions { display: flex; gap: 8px; flex-wrap: wrap; }
@@ -117,6 +124,7 @@
       <div class="stat"><div class="stat-label">Healthy</div><div class="stat-value" id="statHealthy">–</div></div>
       <div class="stat"><div class="stat-label">Endpoints</div><div class="stat-value" id="statEndpoints">–</div></div>
       <div class="stat"><div class="stat-label">Avg latency</div><div class="stat-value" id="statLatency">–</div></div>
+      <div class="stat"><div class="stat-label">Uptime (24h)</div><div class="stat-value" id="statUptime">–</div></div>
     </section>
 
     <div class="toolbar">
@@ -143,6 +151,7 @@
   const refreshBtn = document.getElementById('refreshBtn');
   const updated = document.getElementById('updated');
   let registry = null;
+  let history = {};
   let fetchedAt = null;
 
   // Build DOM nodes with textContent only — app metadata is never parsed as HTML
@@ -167,6 +176,8 @@
       ...(app.version ? [el('span', {}, ['Version ', el('code', { text: app.version })])] : []),
     ]);
 
+    const uptime = renderUptime(history[app.slug]);
+
     const actions = el('div', { class: 'actions' }, [
       ...(app.ui ? [el('a', { class: 'btn primary', href: app.ui, text: 'Open app ↗' })] : []),
       el('a', { class: 'btn', href: app.docs, text: 'API docs ↗' }),
@@ -175,7 +186,7 @@
     const endpoints = el('ul', { class: 'endpoints' }, app.endpoints.map(ep => el('li', { title: ep.summary }, [
       el('span', { class: `method ${ep.method}`, text: ep.method }),
       el('code', { class: 'path', text: ep.path }),
-      ...(ep.auth ? [el('span', { class: 'lock', title: 'Requires X-API-Key', text: '🔒 key' })] : []),
+      ...(ep.auth ? [el('span', { class: 'lock', title: 'Requires sign-in', text: '🔒' })] : []),
     ])));
     const count = app.endpoints.length;
     const details = el('details', {}, [el('summary', { text: `${count} endpoint${count === 1 ? '' : 's'}` }), endpoints]);
@@ -184,9 +195,31 @@
       el('div', { class: 'card-top' }, [el('h2', { text: app.name }), status]),
       ...(app.description ? [el('p', { class: 'desc', text: app.description })] : []),
       facts,
+      uptime,
       actions,
       ...(count ? [details] : []),
     ]);
+  }
+
+  // 24 hourly bars from /status: green all up, amber some failures, red all down, grey no checks
+  function renderUptime(status) {
+    const checked = status ? status.hours.filter(h => h.checks) : [];
+    if (!checked.length) return el('div', { class: 'uptime' }, [el('div', { class: 'uptime-head', text: 'Uptime history: collecting…' })]);
+    const pct = n => (n == null ? '–' : `${n.toFixed(n === 100 ? 0 : 2)}%`);
+    const head = el('div', { class: 'uptime-head' }, [
+      el('span', {}, [el('strong', { text: pct(status.uptime_24h) }), document.createTextNode(' uptime · 24h')]),
+      el('span', { text: `7d ${pct(status.uptime_7d)}` }),
+      ...(status.avg_latency_24h_ms != null ? [el('span', { text: `avg ${status.avg_latency_24h_ms} ms` })] : []),
+    ]);
+    const bars = el('div', { class: 'bars', role: 'img', 'aria-label': `Hourly uptime, last 24 hours: ${pct(status.uptime_24h)}` },
+      status.hours.map(h => {
+        const kind = !h.checks ? '' : h.ok === h.checks ? ' up' : h.ok === 0 ? ' down' : ' partial';
+        const hour = new Date(h.hour).toLocaleTimeString(undefined, { hour: '2-digit', minute: '2-digit' });
+        const detail = h.checks ? `${h.ok}/${h.checks} up${h.avg_latency_ms != null ? ` · ${h.avg_latency_ms} ms` : ''}` : 'no checks';
+        return el('span', { class: `bar${kind}`, title: `${hour} — ${detail}` });
+      }));
+    const legend = el('div', { class: 'bars-legend' }, [el('span', { text: '24h ago' }), el('span', { text: 'now' })]);
+    return el('div', { class: 'uptime' }, [head, bars, legend]);
   }
 
   function matches(app, query) {
@@ -206,6 +239,12 @@
     const latency = document.getElementById('statLatency');
     latency.replaceChildren(...(latencies.length
       ? [document.createTextNode(Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)), el('small', { text: ' ms' })]
+      : [document.createTextNode('–')]));
+    const buckets = Object.values(history).flatMap(s => s.hours);
+    const checks = buckets.reduce((n, h) => n + h.checks, 0);
+    const ok = buckets.reduce((n, h) => n + h.ok, 0);
+    document.getElementById('statUptime').replaceChildren(...(checks
+      ? [document.createTextNode((100 * ok / checks).toFixed(ok === checks ? 0 : 2)), el('small', { text: '%' })]
       : [document.createTextNode('–')]));
   }
 
@@ -237,9 +276,16 @@
   async function load() {
     refreshBtn.disabled = true;
     try {
-      const response = await fetch('/registry', { headers: { Accept: 'application/json' } });
+      // Uptime history is a bonus: the dashboard still renders if /status is unavailable
+      const [response, statusResponse] = await Promise.all([
+        fetch('/registry', { headers: { Accept: 'application/json' } }),
+        fetch('/status', { headers: { Accept: 'application/json' } }).catch(() => null),
+      ]);
       if (!response.ok) throw new Error(`Registry returned ${response.status}`);
       registry = await response.json();
+      if (statusResponse && statusResponse.ok) {
+        history = Object.fromEntries((await statusResponse.json()).apps.map(a => [a.slug, a]));
+      }
       fetchedAt = Date.now();
       renderStats(registry.apps);
       renderRelease(registry.release);
