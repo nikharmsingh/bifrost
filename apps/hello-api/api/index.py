@@ -140,7 +140,8 @@ def parse_endpoints(spec: dict) -> list[Endpoint]:
         for method, op in operations.items():
             if method not in HTTP_METHODS:
                 continue
-            auth = any(
+            # Declared security schemes (bearer token, session cookie) or a legacy X-API-Key header
+            auth = bool(op.get("security")) or any(
                 p.get("in") == "header" and p.get("name", "").lower() == "x-api-key" for p in op.get("parameters", [])
             )
             endpoints.append(Endpoint(method=method.upper(), path=path, summary=op.get("summary", ""), auth=auth))

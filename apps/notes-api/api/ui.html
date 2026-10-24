@@ -4,7 +4,7 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Notes</title>
-  <meta name="description" content="Browse and edit notes stored in Neon Postgres.">
+  <meta name="description" content="Private notes — sign in with GitHub.">
   <script defer src="/_vercel/insights/script.js"></script>
   <style>
     :root {
@@ -22,9 +22,11 @@
       }
     }
     * { box-sizing: border-box; margin: 0; padding: 0; }
+    [hidden] { display: none !important; }
     body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 40px 16px; line-height: 1.5; }
     a { color: var(--accent); text-decoration: none; }
     a:hover { text-decoration: underline; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
     .container { max-width: 1080px; margin: 0 auto; }
     .back { font-size: .85rem; color: var(--muted); }
     header { margin: 12px 0 20px; display: flex; flex-wrap: wrap; gap: 16px; align-items: flex-end; justify-content: space-between; }
@@ -34,19 +36,25 @@
     input, textarea { background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: .9rem; outline: none; }
     input:focus, textarea:focus { border-color: var(--focus); }
     input { padding: 8px 12px; }
-    button { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 14px; font: inherit; font-size: .85rem; cursor: pointer; white-space: nowrap; }
-    button:hover:not(:disabled) { border-color: var(--focus); }
+    button, .button { display: inline-flex; align-items: center; justify-content: center; gap: 8px; background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 8px 14px; font: inherit; font-size: .85rem; cursor: pointer; white-space: nowrap; text-decoration: none !important; }
+    button:hover:not(:disabled), .button:hover { border-color: var(--focus); }
     button:disabled { opacity: .45; cursor: not-allowed; }
-    button.primary { background: linear-gradient(135deg, #6366f1, var(--accent-2)); border: none; color: #fff; font-weight: 600; }
-    button.danger { color: var(--bad); }
-    button.danger:hover:not(:disabled) { border-color: var(--bad); }
+    .primary { background: linear-gradient(135deg, #6366f1, var(--accent-2)); border: none; color: #fff; font-weight: 600; }
+    .danger { color: var(--bad); }
+    .danger:hover:not(:disabled) { border-color: var(--bad); }
+    .small { padding: 4px 10px; font-size: .78rem; }
 
-    .keybar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; margin-bottom: 16px; }
-    .keybar input { flex: 1 1 220px; max-width: 340px; }
-    .mode { font-size: .75rem; font-weight: 600; padding: 3px 10px; border-radius: 999px; white-space: nowrap; }
-    .mode.locked { color: var(--warn); background: var(--warn-bg); }
-    .mode.unlocked { color: var(--ok); background: var(--ok-bg); }
-    .keyhint { font-size: .8rem; color: var(--muted); }
+    .account { display: flex; align-items: center; gap: 10px; }
+    .avatar { width: 32px; height: 32px; border-radius: 50%; border: 1px solid var(--border); background: var(--surface-2); }
+    .who { font-size: .85rem; line-height: 1.2; }
+    .who small { color: var(--muted); display: block; }
+
+    .signin { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 56px 24px; text-align: center; display: flex; flex-direction: column; align-items: center; gap: 14px; }
+    .signin h2 { font-size: 1.25rem; }
+    .signin p { color: var(--muted); max-width: 440px; }
+    .github { background: #24292f; color: #fff; border: none; font-size: .95rem; padding: 11px 20px; font-weight: 600; }
+    .github:hover { background: #32383f; }
+    .github svg { width: 18px; height: 18px; fill: currentColor; }
 
     .layout { display: grid; grid-template-columns: minmax(260px, 340px) 1fr; gap: 16px; align-items: start; }
     @media (max-width: 760px) { .layout { grid-template-columns: 1fr; } }
@@ -71,6 +79,22 @@
     .dirty { color: var(--warn); }
     .placeholder { padding: 48px 16px; text-align: center; color: var(--muted); }
 
+    .tokens { margin-top: 16px; padding: 16px; }
+    .tokens summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
+    .tokens summary small { color: var(--muted); font-weight: 400; margin-left: 6px; }
+    .tokens-body { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
+    .tokens-help { color: var(--muted); font-size: .85rem; }
+    .token-form { display: flex; gap: 8px; flex-wrap: wrap; }
+    .token-form input { flex: 1 1 220px; max-width: 320px; }
+    .new-token { border: 1px solid var(--ok); background: var(--ok-bg); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
+    .new-token p { font-size: .85rem; }
+    .new-token-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+    .new-token code { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; word-break: break-all; flex: 1 1 260px; }
+    .token-list { list-style: none; display: flex; flex-direction: column; }
+    .token-list li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
+    .token-name { font-weight: 600; font-size: .9rem; }
+    .token-meta { color: var(--muted); font-size: .78rem; }
+
     .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none; transition: all .2s; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: .9rem; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: calc(100% - 32px); }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.error { border-color: var(--bad); color: var(--bad); }
@@ -83,41 +107,68 @@
     <header>
       <div>
         <h1>Notes</h1>
-        <p class="tagline">Notes stored in Neon Postgres. Anyone can read; editing needs the API key.</p>
+        <p class="tagline">Your private notes, stored in Neon Postgres.</p>
+      </div>
+      <div class="account" id="account" hidden>
+        <img class="avatar" id="avatar" alt="">
+        <div class="who"><span id="userName"></span><small id="userLogin"></small></div>
+        <button type="button" class="small" id="logoutBtn">Sign out</button>
       </div>
     </header>
 
-    <form class="keybar" id="keyForm" autocomplete="off">
-      <span class="mode locked" id="mode">Read-only</span>
-      <input id="keyInput" type="password" placeholder="X-API-Key to enable editing" aria-label="API key">
-      <button type="submit" id="keySave">Unlock</button>
-      <button type="button" id="keyClear" hidden>Lock</button>
-      <span class="keyhint" id="keyHint">The key is kept only in this browser.</span>
-    </form>
+    <section class="signin" id="signin" hidden>
+      <h2>Sign in to see your notes</h2>
+      <p>Notes are private to each account. Sign in with GitHub — only your public profile is requested.</p>
+      <a class="button github" href="/notes/auth/login">
+        <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 0C3.58 0 0 3.58 0 8c0 3.54 2.29 6.53 5.47 7.59.4.07.55-.17.55-.38 0-.19-.01-.82-.01-1.49-2.01.37-2.53-.49-2.69-.94-.09-.23-.48-.94-.82-1.13-.28-.15-.68-.52-.01-.53.63-.01 1.08.58 1.23.82.72 1.21 1.87.87 2.33.66.07-.52.28-.87.51-1.07-1.78-.2-3.64-.89-3.64-3.95 0-.87.31-1.59.82-2.15-.08-.2-.36-1.02.08-2.12 0 0 .67-.21 2.2.82.64-.18 1.32-.27 2-.27.68 0 1.36.09 2 .27 1.53-1.04 2.2-.82 2.2-.82.44 1.1.16 1.92.08 2.12.51.56.82 1.27.82 2.15 0 3.07-1.87 3.75-3.65 3.95.29.25.54.73.54 1.48 0 1.07-.01 1.93-.01 2.2 0 .21.15.46.55.38A8.013 8.013 0 0016 8c0-4.42-3.58-8-8-8z"/></svg>
+        Sign in with GitHub
+      </a>
+    </section>
 
-    <div class="layout">
-      <aside class="panel">
-        <div class="list-head">
-          <input id="search" type="search" placeholder="Search notes…" aria-label="Search notes">
-          <button type="button" class="primary" id="newBtn">New</button>
-        </div>
-        <ul class="notes" id="notes"><li class="list-empty">Loading notes…</li></ul>
-      </aside>
+    <div id="app" hidden>
+      <div class="layout">
+        <aside class="panel">
+          <div class="list-head">
+            <input id="search" type="search" placeholder="Search notes…" aria-label="Search notes">
+            <button type="button" class="primary" id="newBtn">New</button>
+          </div>
+          <ul class="notes" id="notes"><li class="list-empty">Loading notes…</li></ul>
+        </aside>
 
-      <main class="panel" id="editorPanel">
-        <div class="placeholder" id="placeholder">Select a note, or create a new one.</div>
-        <form class="editor" id="editor" hidden>
-          <input id="title" maxlength="200" placeholder="Title" aria-label="Title" required>
-          <textarea id="content" maxlength="50000" placeholder="Write something…" aria-label="Content"></textarea>
-          <div class="editor-foot">
-            <span class="meta" id="meta"></span>
-            <div class="actions">
-              <button type="button" class="danger" id="deleteBtn">Delete</button>
-              <button type="submit" class="primary" id="saveBtn">Save</button>
+        <main class="panel">
+          <div class="placeholder" id="placeholder">Select a note, or create a new one.</div>
+          <form class="editor" id="editor" hidden>
+            <input id="title" maxlength="200" placeholder="Title" aria-label="Title" required>
+            <textarea id="content" maxlength="50000" placeholder="Write something…" aria-label="Content"></textarea>
+            <div class="editor-foot">
+              <span class="meta" id="meta"></span>
+              <div class="actions">
+                <button type="button" class="danger" id="deleteBtn">Delete</button>
+                <button type="submit" class="primary" id="saveBtn">Save</button>
+              </div>
+            </div>
+          </form>
+        </main>
+      </div>
+
+      <details class="panel tokens" id="tokensPanel">
+        <summary>API tokens <small>for scripts and curl</small></summary>
+        <div class="tokens-body">
+          <p class="tokens-help">Tokens give the same access as your account, to your notes only. Send one as <code>Authorization: Bearer &lt;token&gt;</code>. See the <a href="/notes/docs">API docs</a>.</p>
+          <form class="token-form" id="tokenForm">
+            <input id="tokenName" maxlength="100" placeholder="Token name, e.g. laptop script" aria-label="Token name" required>
+            <button type="submit">Create token</button>
+          </form>
+          <div class="new-token" id="newToken" hidden>
+            <p><strong>Copy this token now.</strong> It won't be shown again.</p>
+            <div class="new-token-row">
+              <code id="newTokenValue"></code>
+              <button type="button" class="small" id="copyToken">Copy</button>
             </div>
           </div>
-        </form>
-      </main>
+          <ul class="token-list" id="tokenList"></ul>
+        </div>
+      </details>
     </div>
 
     <footer>Part of <a href="/">Bifrost</a> · <a href="/notes/docs">API docs</a></footer>
@@ -125,13 +176,8 @@
   <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script>
-  const KEY_STORAGE = 'bifrost-notes-api-key';
   const $ = id => document.getElementById(id);
-  const state = { notes: [], selectedId: null, isNew: false, dirty: false, key: '' };
-
-  // Browser storage can be unavailable (private mode, blocked site data) — the UI still works without it
-  function readStoredKey() { try { return localStorage.getItem(KEY_STORAGE) || ''; } catch { return ''; } }
-  function storeKey(value) { try { value ? localStorage.setItem(KEY_STORAGE, value) : localStorage.removeItem(KEY_STORAGE); } catch {} }
+  const state = { user: null, notes: [], selectedId: null, isNew: false, dirty: false, tokensLoaded: false };
 
   let toastTimer;
   function toast(message, isError = false) {
@@ -144,43 +190,30 @@
   }
 
   function formatDate(iso) {
-    const d = new Date(iso);
-    return isNaN(d) ? '' : d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' });
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
   }
 
-  function setKey(value) {
-    state.key = value;
-    storeKey(value);
-    const unlocked = Boolean(value);
-    $('mode').textContent = unlocked ? 'Editing enabled' : 'Read-only';
-    $('mode').className = `mode ${unlocked ? 'unlocked' : 'locked'}`;
-    $('keyInput').hidden = unlocked;
-    $('keySave').hidden = unlocked;
-    $('keyClear').hidden = !unlocked;
-    $('keyHint').textContent = unlocked ? 'Key saved in this browser only.' : 'The key is kept only in this browser.';
-    $('newBtn').disabled = !unlocked;
-    $('newBtn').title = unlocked ? '' : 'Unlock with the API key to create notes';
-    syncEditorLock();
-  }
-
-  function syncEditorLock() {
-    const locked = !state.key;
-    $('title').readOnly = locked;
-    $('content').readOnly = locked;
-    $('saveBtn').disabled = locked || !state.dirty;
-    $('deleteBtn').disabled = locked || state.isNew;
-    $('deleteBtn').hidden = state.isNew;
-  }
-
-  async function api(path, options = {}) {
-    const headers = { 'Content-Type': 'application/json', ...(options.headers || {}) };
-    if (state.key && options.method && options.method !== 'GET') headers['X-API-Key'] = state.key;
-    const res = await fetch(path, { ...options, headers });
-    if (res.status === 401) {
-      setKey('');
-      throw new Error('That API key was rejected — editing is locked again.');
+  // All note and token text is user content: built with textContent, never innerHTML
+  function el(tag, props = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [k, v] of Object.entries(props)) {
+      if (k === 'text') node.textContent = v;
+      else if (k === 'class') node.className = v;
+      else if (k === 'onclick') node.addEventListener('click', v);
+      else node.setAttribute(k, v);
     }
-    if (res.status === 503) throw new Error('The notes database is not available right now.');
+    node.append(...children);
+    return node;
+  }
+
+  class SignedOut extends Error {}
+
+  // Session cookie is httpOnly and sent automatically (same origin)
+  async function api(path, options = {}) {
+    const res = await fetch(path, { ...options, headers: { 'Content-Type': 'application/json', ...(options.headers || {}) } });
+    if (res.status === 401) { showSignedOut(); throw new SignedOut('Your session ended — please sign in again.'); }
+    if (res.status === 503) throw new Error('The notes service is not available right now.');
     if (!res.ok) {
       const data = await res.json().catch(() => ({}));
       throw new Error(typeof data.detail === 'string' ? data.detail : `Request failed (${res.status})`);
@@ -188,33 +221,54 @@
     return res.status === 204 ? null : res.json();
   }
 
+  function showSignedOut() {
+    state.user = null;
+    $('signin').hidden = false;
+    $('app').hidden = true;
+    $('account').hidden = true;
+  }
+
+  function showSignedIn(user) {
+    state.user = user;
+    $('signin').hidden = true;
+    $('app').hidden = false;
+    $('account').hidden = false;
+    $('userName').textContent = user.name || user.login;
+    $('userLogin').textContent = `@${user.login}`;
+    if (user.avatar_url && user.avatar_url.startsWith('https://')) $('avatar').src = user.avatar_url;
+    else $('avatar').removeAttribute('src');
+  }
+
+  // ── notes ────────────────────────────────────────────────────────────────
+
   function renderList() {
     const query = $('search').value.trim().toLowerCase();
     const visible = state.notes.filter(n => !query || `${n.title} ${n.content}`.toLowerCase().includes(query));
-    const list = $('notes');
     if (!visible.length) {
-      const msg = state.notes.length ? 'No notes match your search.' : (state.key ? 'No notes yet — create the first one.' : 'No notes yet.');
-      list.replaceChildren(Object.assign(document.createElement('li'), { className: 'list-empty', textContent: msg }));
+      $('notes').replaceChildren(el('li', { class: 'list-empty', text: state.notes.length ? 'No notes match your search.' : 'No notes yet — create your first one.' }));
       return;
     }
-    // Note text is user content: textContent only, never innerHTML
-    list.replaceChildren(...visible.map(note => {
-      const li = document.createElement('li');
-      const btn = document.createElement('button');
-      btn.type = 'button';
-      btn.className = `note-item${note.id === state.selectedId ? ' selected' : ''}`;
-      const title = Object.assign(document.createElement('div'), { className: 'note-title', textContent: note.title });
-      const snippet = Object.assign(document.createElement('div'), { className: 'note-snippet', textContent: note.content.slice(0, 120) || 'Empty note' });
-      const date = Object.assign(document.createElement('div'), { className: 'note-date', textContent: formatDate(note.updated_at) });
-      btn.append(title, snippet, date);
-      btn.addEventListener('click', () => selectNote(note.id));
-      li.append(btn);
-      return li;
-    }));
+    $('notes').replaceChildren(...visible.map(note => el('li', {}, [
+      el('button', { type: 'button', class: `note-item${note.id === state.selectedId ? ' selected' : ''}`, onclick: () => selectNote(note.id) }, [
+        el('div', { class: 'note-title', text: note.title }),
+        el('div', { class: 'note-snippet', text: note.content.slice(0, 120) || 'Empty note' }),
+        el('div', { class: 'note-date', text: formatDate(note.updated_at) }),
+      ]),
+    ])));
   }
 
-  function confirmDiscard() {
-    return !state.dirty || confirm('You have unsaved changes. Discard them?');
+  const currentNote = () => state.notes.find(n => n.id === state.selectedId) || null;
+  const confirmDiscard = () => !state.dirty || confirm('You have unsaved changes. Discard them?');
+
+  function syncEditor() {
+    $('saveBtn').disabled = !state.dirty;
+    $('deleteBtn').hidden = state.isNew;
+    const meta = $('meta');
+    const note = currentNote();
+    meta.className = state.dirty ? 'meta dirty' : 'meta';
+    meta.textContent = state.dirty ? 'Unsaved changes'
+      : note ? `Updated ${formatDate(note.updated_at)} · created ${formatDate(note.created_at)}`
+      : 'New note — not saved yet';
   }
 
   function openEditor(note) {
@@ -223,20 +277,8 @@
     $('title').value = note ? note.title : '';
     $('content').value = note ? note.content : '';
     state.dirty = false;
-    updateMeta(note);
-    syncEditorLock();
+    syncEditor();
   }
-
-  function updateMeta(note) {
-    const meta = $('meta');
-    if (state.dirty) { meta.textContent = 'Unsaved changes'; meta.className = 'meta dirty'; return; }
-    meta.className = 'meta';
-    meta.textContent = note
-      ? `Updated ${formatDate(note.updated_at)} · created ${formatDate(note.created_at)}`
-      : 'New note — not saved yet';
-  }
-
-  function currentNote() { return state.notes.find(n => n.id === state.selectedId) || null; }
 
   function selectNote(id) {
     if (id === state.selectedId || !confirmDiscard()) return;
@@ -257,9 +299,10 @@
 
   async function save(event) {
     event?.preventDefault();
-    if (!state.key || !state.dirty) return;
-    const body = JSON.stringify({ title: $('title').value.trim(), content: $('content').value });
-    if (!$('title').value.trim()) return toast('Give the note a title first.', true);
+    if (!state.dirty) return;
+    const title = $('title').value.trim();
+    if (!title) return toast('Give the note a title first.', true);
+    const body = JSON.stringify({ title, content: $('content').value });
     $('saveBtn').disabled = true;
     try {
       const saved = state.isNew
@@ -269,17 +312,16 @@
       state.selectedId = saved.id;
       state.isNew = false;
       state.dirty = false;
-      updateMeta(saved);
       renderList();
       toast('Saved');
     } catch (err) {
       toast(err.message, true);
     } finally {
-      syncEditorLock();
+      syncEditor();
     }
   }
 
-  async function remove() {
+  async function removeNote() {
     const note = currentNote();
     if (!note || !confirm(`Delete “${note.title}”? This can't be undone.`)) return;
     try {
@@ -296,44 +338,96 @@
     }
   }
 
-  async function load() {
+  // ── API tokens ───────────────────────────────────────────────────────────
+
+  function renderTokens(tokens) {
+    $('tokenList').replaceChildren(...(tokens.length ? tokens.map(t => el('li', {}, [
+      el('div', {}, [
+        el('div', { class: 'token-name', text: t.name }),
+        el('div', { class: 'token-meta', text: `${t.display_prefix}… · created ${formatDate(t.created_at)} · ${t.last_used_at ? `last used ${formatDate(t.last_used_at)}` : 'never used'}` }),
+      ]),
+      el('button', { type: 'button', class: 'small danger', text: 'Revoke', onclick: () => revokeToken(t) }),
+    ])) : [el('li', { class: 'token-meta', text: 'No tokens yet.' })]));
+  }
+
+  async function loadTokens() {
+    try { renderTokens(await api('/notes/tokens')); state.tokensLoaded = true; }
+    catch (err) { toast(err.message, true); }
+  }
+
+  async function createToken(event) {
+    event.preventDefault();
+    const name = $('tokenName').value.trim();
+    if (!name) return;
+    try {
+      const created = await api('/notes/tokens', { method: 'POST', body: JSON.stringify({ name }) });
+      $('tokenName').value = '';
+      $('newTokenValue').textContent = created.token;
+      $('newToken').hidden = false;
+      await loadTokens();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  async function revokeToken(token) {
+    if (!confirm(`Revoke “${token.name}”? Scripts using it will stop working.`)) return;
+    try {
+      await api(`/notes/tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' });
+      toast('Token revoked');
+      await loadTokens();
+    } catch (err) {
+      toast(err.message, true);
+    }
+  }
+
+  async function copyToken() {
+    try { await navigator.clipboard.writeText($('newTokenValue').textContent); toast('Copied'); }
+    catch { toast('Copy failed — select the token and copy it manually.', true); }
+  }
+
+  // ── startup ──────────────────────────────────────────────────────────────
+
+  async function start() {
+    try {
+      showSignedIn(await api('/notes/me'));
+    } catch (err) {
+      if (!(err instanceof SignedOut)) { showSignedOut(); toast(err.message, true); }
+      return;
+    }
     try {
       state.notes = await api('/notes');
       renderList();
     } catch (err) {
-      $('notes').replaceChildren(Object.assign(document.createElement('li'), { className: 'list-empty', textContent: err.message }));
+      $('notes').replaceChildren(el('li', { class: 'list-empty', text: err.message }));
     }
   }
 
-  function markDirty() {
-    if (!state.key) return;
-    state.dirty = true;
-    updateMeta(currentNote());
-    syncEditorLock();
+  async function logout() {
+    if (!confirmDiscard()) return;
+    await fetch('/notes/auth/logout', { method: 'POST' }).catch(() => {});
+    state.dirty = false;
+    showSignedOut();
   }
 
-  $('keyForm').addEventListener('submit', e => {
-    e.preventDefault();
-    const value = $('keyInput').value.trim();
-    if (!value) return toast('Enter the API key first.', true);
-    $('keyInput').value = '';
-    setKey(value);
-    toast('Editing enabled — the key is checked on your first save.');
-  });
-  $('keyClear').addEventListener('click', () => { setKey(''); toast('Editing locked'); });
+  function markDirty() { state.dirty = true; syncEditor(); }
+
   $('search').addEventListener('input', renderList);
   $('newBtn').addEventListener('click', newNote);
   $('editor').addEventListener('submit', save);
-  $('deleteBtn').addEventListener('click', remove);
+  $('deleteBtn').addEventListener('click', removeNote);
   $('title').addEventListener('input', markDirty);
   $('content').addEventListener('input', markDirty);
+  $('logoutBtn').addEventListener('click', logout);
+  $('tokenForm').addEventListener('submit', createToken);
+  $('copyToken').addEventListener('click', copyToken);
+  $('tokensPanel').addEventListener('toggle', () => { if ($('tokensPanel').open && !state.tokensLoaded) loadTokens(); });
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !$('editor').hidden) { e.preventDefault(); save(); }
   });
   window.addEventListener('beforeunload', e => { if (state.dirty) e.preventDefault(); });
 
-  setKey(readStoredKey());
-  load();
+  start();
 </script>
 </body>
 </html>

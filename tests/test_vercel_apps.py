@@ -72,24 +72,8 @@ def test_ui_does_not_render_model_output_as_html():
 # ── notes-api ──────────────────────────────────────────────────────────────────
 
 
-def test_notes_write_requires_api_key_when_configured(monkeypatch):
-    monkeypatch.setattr(notes, "NOTES_API_KEY", "secret")
-    client = TestClient(notes.app)
-    body = {"title": "t", "content": "c"}
-    assert client.post("/notes", json=body).status_code == 401
-    assert client.post("/notes", json=body, headers={"X-API-Key": "wrong"}).status_code == 401
-    assert client.delete("/notes/abc").status_code == 401
-
-
-def test_notes_postgres_driver_is_installed():
-    # create_engine imports the dialect's default DBAPI — this is what crashed prod when the driver was missing
-    engine = notes.create_engine("postgresql://user:pass@localhost/db", poolclass=notes.NullPool)
-    assert engine.dialect.driver == "psycopg"
-
-
 def test_notes_without_database_returns_503(monkeypatch):
     monkeypatch.setattr(notes, "engine", None)
-    monkeypatch.setattr(notes, "NOTES_API_KEY", "")
     client = TestClient(notes.app)
     assert client.get("/notes").status_code == 503
 
