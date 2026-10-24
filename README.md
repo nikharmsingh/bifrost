@@ -18,6 +18,12 @@
 
 ---
 
+## Live dashboard
+
+**[bifrost-api.vercel.app](https://bifrost-api.vercel.app/)** lists every deployed app with live health, latency, endpoints (🔒 marks ones needing `X-API-Key`) and links to each app's UI and API docs. It's built automatically from the routes in `vercel.json` plus each app's `openapi.json`, so a new app appears as soon as it's routed. Raw data: [`/registry`](https://bifrost-api.vercel.app/registry).
+
+---
+
 ## Architecture
 
 ![Bifrost Architecture](docs/architecture.svg)

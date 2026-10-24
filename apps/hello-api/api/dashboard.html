@@ -1,0 +1,254 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Bifrost Dashboard</title>
+  <meta name="description" content="Live dashboard of every app deployed from the Bifrost monorepo.">
+  <script defer src="/_vercel/speed-insights/script.js"></script>
+  <script defer src="/_vercel/insights/script.js"></script>
+  <style>
+    :root {
+      --bg: #0a0a0a; --surface: #141414; --surface-2: #1c1c1c; --border: #262626; --border-hover: #6366f1;
+      --text: #e5e5e5; --muted: #8a8a8a; --faint: #525252;
+      --accent: #818cf8; --accent-2: #a78bfa;
+      --ok: #4ade80; --ok-bg: rgba(74, 222, 128, .12); --bad: #f87171; --bad-bg: rgba(248, 113, 113, .12);
+      --get: #60a5fa; --post: #4ade80; --put: #fbbf24; --patch: #c084fc; --delete: #f87171;
+    }
+    @media (prefers-color-scheme: light) {
+      :root {
+        --bg: #fafafa; --surface: #ffffff; --surface-2: #f4f4f5; --border: #e4e4e7; --border-hover: #6366f1;
+        --text: #18181b; --muted: #52525b; --faint: #a1a1aa;
+        --accent: #4f46e5; --accent-2: #7c3aed;
+        --ok: #15803d; --ok-bg: rgba(21, 128, 61, .1); --bad: #b91c1c; --bad-bg: rgba(185, 28, 28, .1);
+        --get: #2563eb; --post: #15803d; --put: #b45309; --patch: #7e22ce; --delete: #b91c1c;
+      }
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    body { font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; padding: 48px 16px; line-height: 1.5; }
+    a { color: var(--accent); text-decoration: none; }
+    a:hover { text-decoration: underline; }
+    code { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .8rem; }
+    .container { max-width: 1080px; margin: 0 auto; }
+
+    header { margin-bottom: 32px; }
+    h1 { font-size: 2.25rem; font-weight: 700; letter-spacing: -.02em; background: linear-gradient(135deg, #6366f1, var(--accent-2)); -webkit-background-clip: text; background-clip: text; -webkit-text-fill-color: transparent; display: inline-block; }
+    .tagline { color: var(--muted); margin-top: 4px; }
+    .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 16px; font-size: .875rem; color: var(--muted); }
+    .pill { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; color: var(--text); font-weight: 600; font-size: .8rem; }
+    .meta img { height: 20px; display: block; }
+
+    .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
+    .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
+    .stat-label { font-size: .75rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); }
+    .stat-value { font-size: 1.75rem; font-weight: 700; margin-top: 2px; font-variant-numeric: tabular-nums; }
+    .stat-value small { font-size: .9rem; color: var(--muted); font-weight: 500; }
+
+    .toolbar { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+    .search { flex: 1 1 240px; max-width: 360px; background: var(--surface); border: 1px solid var(--border); border-radius: 8px; padding: 8px 12px; color: var(--text); font-size: .9rem; outline: none; }
+    .search:focus { border-color: var(--border-hover); }
+    .refresh { display: flex; align-items: center; gap: 12px; font-size: .8rem; color: var(--muted); }
+    button { background: var(--surface); border: 1px solid var(--border); color: var(--text); border-radius: 8px; padding: 7px 14px; font-size: .85rem; cursor: pointer; }
+    button:hover { border-color: var(--border-hover); }
+    button:disabled { opacity: .5; cursor: wait; }
+
+    .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(320px, 1fr)); gap: 16px; }
+    .card { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 20px; display: flex; flex-direction: column; gap: 12px; transition: border-color .2s; min-width: 0; }
+    .card:hover { border-color: var(--border-hover); }
+    .card-top { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; }
+    .card h2 { font-size: 1.1rem; font-weight: 600; }
+    .status { display: inline-flex; align-items: center; gap: 6px; font-size: .75rem; font-weight: 600; padding: 3px 9px; border-radius: 999px; white-space: nowrap; }
+    .status::before { content: ""; width: 7px; height: 7px; border-radius: 50%; background: currentColor; }
+    .status.ok { color: var(--ok); background: var(--ok-bg); }
+    .status.bad { color: var(--bad); background: var(--bad-bg); }
+    .desc { color: var(--muted); font-size: .9rem; }
+    .facts { display: flex; flex-wrap: wrap; gap: 6px 14px; font-size: .8rem; color: var(--muted); }
+    .facts code { color: var(--text); background: var(--surface-2); padding: 1px 6px; border-radius: 4px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; }
+    .btn { font-size: .8rem; border: 1px solid var(--accent); color: var(--accent); padding: 4px 12px; border-radius: 6px; }
+    .btn:hover { background: var(--accent); color: var(--bg); text-decoration: none; }
+    .btn.primary { background: var(--accent); color: var(--bg); }
+
+    details { border-top: 1px solid var(--border); padding-top: 10px; margin-top: auto; }
+    summary { cursor: pointer; font-size: .8rem; color: var(--muted); user-select: none; }
+    summary:hover { color: var(--text); }
+    .endpoints { list-style: none; display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+    .endpoints li { display: flex; align-items: center; gap: 8px; min-width: 0; }
+    .method { font-family: ui-monospace, Menlo, monospace; font-size: .65rem; font-weight: 700; width: 52px; flex-shrink: 0; text-align: center; padding: 2px 0; border-radius: 4px; background: var(--surface-2); }
+    .method.GET { color: var(--get); } .method.POST { color: var(--post); } .method.PUT { color: var(--put); }
+    .method.PATCH { color: var(--patch); } .method.DELETE { color: var(--delete); }
+    .path { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+    .lock { font-size: .7rem; color: var(--muted); flex-shrink: 0; }
+
+    .notice { background: var(--surface); border: 1px dashed var(--border); border-radius: 12px; padding: 32px; text-align: center; color: var(--muted); grid-column: 1 / -1; }
+    .notice.error { border-color: var(--bad); color: var(--bad); }
+    .skeleton { height: 220px; border-radius: 12px; background: linear-gradient(90deg, var(--surface) 25%, var(--surface-2) 50%, var(--surface) 75%); background-size: 200% 100%; animation: shimmer 1.4s infinite; }
+    @keyframes shimmer { to { background-position: -200% 0; } }
+
+    footer { margin-top: 48px; text-align: center; color: var(--faint); font-size: .85rem; }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <header>
+      <h1>⚡ Bifrost</h1>
+      <p class="tagline">Every app deployed from the Bifrost monorepo, with live status.</p>
+      <div class="meta">
+        <span class="pill">v{{version}}</span>
+        <span id="release"></span>
+        <a href="https://github.com/nikharmsingh/bifrost">GitHub ↗</a>
+        <a href="https://github.com/nikharmsingh/bifrost/actions/workflows/ci.yml" aria-label="CI status">
+          <img src="https://img.shields.io/github/actions/workflow/status/nikharmsingh/bifrost/ci.yml?branch=main&label=CI" alt="CI status">
+        </a>
+      </div>
+    </header>
+
+    <section class="stats" aria-label="Summary">
+      <div class="stat"><div class="stat-label">Apps</div><div class="stat-value" id="statApps">–</div></div>
+      <div class="stat"><div class="stat-label">Healthy</div><div class="stat-value" id="statHealthy">–</div></div>
+      <div class="stat"><div class="stat-label">Endpoints</div><div class="stat-value" id="statEndpoints">–</div></div>
+      <div class="stat"><div class="stat-label">Avg latency</div><div class="stat-value" id="statLatency">–</div></div>
+    </section>
+
+    <div class="toolbar">
+      <input id="search" class="search" type="search" placeholder="Filter apps or endpoints…" aria-label="Filter apps">
+      <div class="refresh">
+        <span id="updated">Loading…</span>
+        <button id="refreshBtn" type="button">Refresh</button>
+      </div>
+    </div>
+
+    <main class="grid" id="grid">
+      <div class="skeleton"></div><div class="skeleton"></div><div class="skeleton"></div>
+    </main>
+
+    <footer>
+      Built with FastAPI · Deployed on <a href="https://vercel.com">Vercel</a> · <a href="/registry">Registry JSON</a>
+    </footer>
+  </div>
+
+<script>
+  const AUTO_REFRESH_MS = 60_000;
+  const grid = document.getElementById('grid');
+  const search = document.getElementById('search');
+  const refreshBtn = document.getElementById('refreshBtn');
+  const updated = document.getElementById('updated');
+  let registry = null;
+  let fetchedAt = null;
+
+  // Build DOM nodes with textContent only — app metadata is never parsed as HTML
+  function el(tag, props = {}, children = []) {
+    const node = document.createElement(tag);
+    for (const [key, value] of Object.entries(props)) {
+      if (key === 'text') node.textContent = value;
+      else if (key === 'class') node.className = value;
+      else node.setAttribute(key, value);
+    }
+    node.append(...children);
+    return node;
+  }
+
+  function renderCard(app) {
+    const status = app.health.ok
+      ? el('span', { class: 'status ok', text: app.health.latency_ms != null ? `Up · ${app.health.latency_ms} ms` : 'Up' })
+      : el('span', { class: 'status bad', text: app.health.status_code ? `Down · ${app.health.status_code}` : 'Unreachable' });
+
+    const facts = el('div', { class: 'facts' }, [
+      el('span', {}, ['Base ', el('code', { text: app.prefix })]),
+      ...(app.version ? [el('span', {}, ['Version ', el('code', { text: app.version })])] : []),
+    ]);
+
+    const actions = el('div', { class: 'actions' }, [
+      ...(app.ui ? [el('a', { class: 'btn primary', href: app.ui, text: 'Open app ↗' })] : []),
+      el('a', { class: 'btn', href: app.docs, text: 'API docs ↗' }),
+    ]);
+
+    const endpoints = el('ul', { class: 'endpoints' }, app.endpoints.map(ep => el('li', { title: ep.summary }, [
+      el('span', { class: `method ${ep.method}`, text: ep.method }),
+      el('code', { class: 'path', text: ep.path }),
+      ...(ep.auth ? [el('span', { class: 'lock', title: 'Requires X-API-Key', text: '🔒 key' })] : []),
+    ])));
+    const count = app.endpoints.length;
+    const details = el('details', {}, [el('summary', { text: `${count} endpoint${count === 1 ? '' : 's'}` }), endpoints]);
+
+    return el('article', { class: 'card' }, [
+      el('div', { class: 'card-top' }, [el('h2', { text: app.name }), status]),
+      ...(app.description ? [el('p', { class: 'desc', text: app.description })] : []),
+      facts,
+      actions,
+      ...(count ? [details] : []),
+    ]);
+  }
+
+  function matches(app, query) {
+    if (!query) return true;
+    const haystack = [app.name, app.description, app.prefix, ...app.endpoints.map(e => `${e.method} ${e.path}`)]
+      .join(' ').toLowerCase();
+    return haystack.includes(query);
+  }
+
+  function renderStats(apps) {
+    const healthy = apps.filter(a => a.health.ok);
+    const latencies = healthy.map(a => a.health.latency_ms).filter(n => n != null);
+    document.getElementById('statApps').textContent = apps.length;
+    document.getElementById('statHealthy').replaceChildren(
+      document.createTextNode(healthy.length), el('small', { text: ` / ${apps.length}` }));
+    document.getElementById('statEndpoints').textContent = apps.reduce((n, a) => n + a.endpoints.length, 0);
+    const latency = document.getElementById('statLatency');
+    latency.replaceChildren(...(latencies.length
+      ? [document.createTextNode(Math.round(latencies.reduce((a, b) => a + b, 0) / latencies.length)), el('small', { text: ' ms' })]
+      : [document.createTextNode('–')]));
+  }
+
+  function renderRelease(release) {
+    const target = document.getElementById('release');
+    if (!release) { target.replaceChildren(); return; }
+    const date = release.published_at ? new Date(release.published_at).toLocaleDateString(undefined, { dateStyle: 'medium' }) : '';
+    target.replaceChildren(
+      document.createTextNode('Latest release: '),
+      el('a', { href: release.url, text: release.name }),
+      ...(date ? [document.createTextNode(` · ${date}`)] : []));
+  }
+
+  function render() {
+    if (!registry) return;
+    const query = search.value.trim().toLowerCase();
+    const visible = registry.apps.filter(app => matches(app, query));
+    grid.replaceChildren(...(visible.length
+      ? visible.map(renderCard)
+      : [el('div', { class: 'notice', text: `No apps match “${search.value}”.` })]));
+  }
+
+  function renderUpdated() {
+    if (!fetchedAt) return;
+    const seconds = Math.round((Date.now() - fetchedAt) / 1000);
+    updated.textContent = seconds < 5 ? 'Updated just now' : `Updated ${seconds < 60 ? `${seconds}s` : `${Math.round(seconds / 60)}m`} ago`;
+  }
+
+  async function load() {
+    refreshBtn.disabled = true;
+    try {
+      const response = await fetch('/registry', { headers: { Accept: 'application/json' } });
+      if (!response.ok) throw new Error(`Registry returned ${response.status}`);
+      registry = await response.json();
+      fetchedAt = Date.now();
+      renderStats(registry.apps);
+      renderRelease(registry.release);
+      render();
+      renderUpdated();
+    } catch (err) {
+      if (!registry) grid.replaceChildren(el('div', { class: 'notice error', text: `Could not load the app registry: ${err.message}` }));
+      updated.textContent = 'Refresh failed';
+    } finally {
+      refreshBtn.disabled = false;
+    }
+  }
+
+  search.addEventListener('input', render);
+  refreshBtn.addEventListener('click', load);
+  setInterval(renderUpdated, 5_000);
+  setInterval(() => { if (!document.hidden) load(); }, AUTO_REFRESH_MS);
+  load();
+</script>
+</body>
+</html>
