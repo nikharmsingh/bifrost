@@ -3,6 +3,12 @@ name = "bifrost"
 version = "0.0.0"
 requires-python = ">=3.12"
 
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
 [tool.uv.workspace]
 members = [
     "packages/*",
@@ -18,7 +24,14 @@ target-version = "py312"
 
 [tool.ruff.lint]
 select = ["E", "F", "I", "UP", "B", "SIM"]
-ignore = ["E501"]
+ignore = ["E501", "UP046"]
+
+[tool.ruff.lint.flake8-bugbear]
+# FastAPI dependency/param markers are designed to be called in defaults
+extend-immutable-calls = ["fastapi.File", "fastapi.Form", "fastapi.Header", "fastapi.Depends"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["core", "llm", "tools"]
+known-first-party = ["core", "llm", "tools", "conftest"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

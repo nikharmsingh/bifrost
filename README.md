@@ -1,7 +1,7 @@
 # ⚡ Bifrost
 
 <p align="center">
-  <img src="https://img.shields.io/badge/python-3.13-blue?logo=python&logoColor=white" alt="Python 3.13"/>
+  <img src="https://img.shields.io/badge/python-3.12-blue?logo=python&logoColor=white" alt="Python 3.12"/>
   <img src="https://img.shields.io/badge/package_manager-uv-violet?logo=astral&logoColor=white" alt="uv"/>
   <img src="https://img.shields.io/badge/deployed_on-Vercel-black?logo=vercel&logoColor=white" alt="Vercel"/>
   <img src="https://img.shields.io/badge/LLM-Anthropic-orange?logo=anthropic&logoColor=white" alt="Anthropic"/>

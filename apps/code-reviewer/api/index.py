@@ -80,7 +80,7 @@ async def health() -> dict:
 
 
 @app.post("/code-review", response_model=ReviewResponse)
-async def review_code(req: ReviewRequest) -> dict:
+def review_code(req: ReviewRequest) -> dict:
     if not req.code.strip():
         raise HTTPException(status_code=400, detail="code must not be empty")
 
@@ -100,4 +100,4 @@ async def review_code(req: ReviewRequest) -> dict:
     try:
         return json.loads(response.choices[0].message.content)
     except (json.JSONDecodeError, IndexError):
-        raise HTTPException(status_code=500, detail="Model returned an unexpected response format")
+        raise HTTPException(status_code=500, detail="Model returned an unexpected response format") from None

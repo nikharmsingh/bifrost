@@ -236,6 +236,7 @@ app = FastAPI(
     openapi_url="/my-app/openapi.json",
 )
 
+
 @app.get("/my-app")
 async def root():
     return {"app": "my-app"}

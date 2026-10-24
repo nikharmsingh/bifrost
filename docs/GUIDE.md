@@ -85,8 +85,8 @@ from fastapi.middleware.cors import CORSMiddleware
 app = FastAPI(
     title="My App",
     version="0.1.0",
-    docs_url="/my-app/docs",           # must include the path prefix
-    openapi_url="/my-app/openapi.json", # must include the path prefix
+    docs_url="/my-app/docs",  # must include the path prefix
+    openapi_url="/my-app/openapi.json",  # must include the path prefix
 )
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -338,8 +338,10 @@ from .graph import graph
 
 app = FastAPI()
 
+
 class RunRequest(BaseModel):
     input: str
+
 
 @app.post("/run")
 async def run(req: RunRequest) -> dict:

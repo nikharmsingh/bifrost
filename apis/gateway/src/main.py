@@ -1,7 +1,9 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+
 from core.config import get_settings
 from core.logging import get_logger
+
 from .routers import chat
 
 logger = get_logger(__name__)

@@ -1,13 +1,17 @@
 from functools import lru_cache
+
 from langchain_anthropic import ChatAnthropic
 from langchain_core.messages import HumanMessage
+
 from core.config import get_settings
+
 from .state import ResearchState
 
 
 @lru_cache
 def _get_model() -> ChatAnthropic:
-    return ChatAnthropic(model="claude-sonnet-4-6", api_key=get_settings().anthropic_api_key)
+    settings = get_settings()
+    return ChatAnthropic(model=settings.default_model, api_key=settings.anthropic_api_key)
 
 
 def researcher(state: ResearchState) -> ResearchState:
