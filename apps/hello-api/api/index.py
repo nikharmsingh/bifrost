@@ -290,6 +290,16 @@ def _load_dashboard_html() -> str:
 DASHBOARD_HTML = _load_dashboard_html()
 
 
+def _load_page(name: str) -> str:
+    try:
+        return (pathlib.Path(__file__).parent / name).read_text()
+    except FileNotFoundError:
+        return "<!DOCTYPE html><title>Bifrost</title><p>Page unavailable — <a href='/'>back to the dashboard</a>.</p>"
+
+
+SETTINGS_HTML = _load_page("settings.html")
+
+
 # Same for every visitor (personal data loads via JS), so serve it from Vercel's regional edge cache.
 # Browsers always revalidate; the edge refreshes in the background.
 PAGE_CACHE_HEADERS = {
@@ -307,6 +317,12 @@ REGISTRY_CACHE_HEADERS = {
 async def root(response: Response) -> str:
     response.headers.update(PAGE_CACHE_HEADERS)
     return DASHBOARD_HTML.replace("{{version}}", app.version)
+
+
+@app.get("/settings", response_class=HTMLResponse, include_in_schema=False)
+async def settings_page(response: Response) -> str:
+    response.headers.update(PAGE_CACHE_HEADERS)
+    return SETTINGS_HTML
 
 
 @app.get("/registry", response_model=Registry, summary="Live registry of deployed apps")

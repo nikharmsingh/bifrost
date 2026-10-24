@@ -26,7 +26,8 @@ def test_hello_health_and_quotes():
 # ── code-reviewer ──────────────────────────────────────────────────────────────
 
 
-def test_code_review_rejects_empty_and_oversized_code():
+def test_code_review_rejects_empty_and_oversized_code(monkeypatch):
+    monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.require_key("groq"), lambda: "gsk_x")
     client = TestClient(code_reviewer.app)
     assert client.post("/code-review", json={"code": "   "}).status_code == 400
     assert client.post("/code-review", json={"code": "x" * 10_001}).status_code == 400
@@ -53,7 +54,8 @@ def test_assert_public_url_blocks_internal_targets(url):
     assert exc.value.status_code == 422
 
 
-def test_analyze_rejects_internal_job_url():
+def test_analyze_rejects_internal_job_url(monkeypatch):
+    monkeypatch.setitem(resume.app.dependency_overrides, resume.auth.require_key("groq"), lambda: "gsk_x")
     client = TestClient(resume.app)
     response = client.post(
         "/resume-analyzer/analyze",
@@ -108,15 +110,20 @@ def test_code_review_returns_502_when_groq_model_fails(monkeypatch):
     import httpx
     from groq import APIError
 
-    class FailingClient:
-        class chat:  # noqa: N801 — mirrors the Groq client's attribute layout
-            class completions:  # noqa: N801
-                @staticmethod
-                def create(**kwargs):
-                    assert kwargs["model"] == code_reviewer.GROQ_MODEL
-                    raise APIError("model_not_found", request=httpx.Request("POST", "https://api.groq.com"), body=None)
+    class FailingGroq:
+        def __init__(self, api_key):
+            self.chat = self
 
-    monkeypatch.setattr(code_reviewer, "get_client", lambda: FailingClient)
+        @property
+        def completions(self):
+            return self
+
+        def create(self, **kwargs):
+            assert kwargs["model"] == code_reviewer.GROQ_MODEL
+            raise APIError("model_not_found", request=httpx.Request("POST", "https://api.groq.com"), body=None)
+
+    monkeypatch.setattr(code_reviewer, "Groq", FailingGroq)
+    monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.require_key("groq"), lambda: "gsk_x")
     response = TestClient(code_reviewer.app).post("/code-review", json={"code": "print(1)"})
     assert response.status_code == 502
     assert "model_not_found" in response.json()["detail"]
@@ -127,7 +134,13 @@ def test_code_review_returns_502_when_groq_model_fails(monkeypatch):
 
 @pytest.mark.parametrize(
     ("module", "path"),
-    [("hello", "/"), ("code_reviewer", "/code-review"), ("resume", "/resume-analyzer"), ("notes", "/notes/ui")],
+    [
+        ("hello", "/"),
+        ("hello", "/settings"),
+        ("code_reviewer", "/code-review"),
+        ("resume", "/resume-analyzer"),
+        ("notes", "/notes/ui"),
+    ],
 )
 def test_ui_pages_are_edge_cached_but_browsers_revalidate(module, path):
     response = TestClient(globals()[module].app).get(path)

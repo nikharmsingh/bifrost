@@ -3,22 +3,42 @@ import io
 import ipaddress
 import json
 import os
+import pathlib
+import sys
 from urllib.parse import urljoin, urlparse
 
-import anthropic
 import httpx
 import pypdf
+import sqlalchemy as sa
 from bs4 import BeautifulSoup
-from fastapi import FastAPI, File, Form, HTTPException, UploadFile
+from fastapi import Depends, FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
-from groq import APIError, Groq
+from groq import APIError, AuthenticationError, Groq
 from pydantic import BaseModel
+from sqlalchemy.pool import NullPool
+
+# Vercel installs from requirements.txt, not the uv workspace, so load the shared auth package from the repo
+sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "packages" / "auth" / "src"))
+from bifrost_auth import Auth  # noqa: E402
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+# NullPool is required for serverless — Neon handles pooling via PgBouncer
+engine = sa.create_engine(DATABASE_URL, poolclass=NullPool) if DATABASE_URL else None
+
+
+def require_db() -> sa.Engine:
+    if not engine:
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return engine
+
+
+auth = Auth(require_db)
 
 app = FastAPI(
     title="Resume Analyzer",
-    description="Match a PDF resume against a job posting URL — match score, gaps and keywords (Claude or Groq).",
+    description="Match a PDF resume against a job posting URL — match score, gaps and keywords. Uses your own Groq key.",
     version="0.1.0",
     docs_url="/resume-analyzer/docs",
     openapi_url="/resume-analyzer/openapi.json",
@@ -31,63 +51,6 @@ MAX_RESUME_CHARS = 5_000
 MAX_JOB_CHARS = 5_000
 MAX_PDF_BYTES = 4 * 1024 * 1024  # 4 MB
 MAX_REDIRECTS = 5
-
-ANALYSIS_TOOL = {
-    "name": "submit_analysis",
-    "description": "Submit the structured resume vs job posting analysis",
-    "input_schema": {
-        "type": "object",
-        "properties": {
-            "match_score": {
-                "type": "integer",
-                "description": "Overall match score from 0 to 100",
-            },
-            "verdict": {
-                "type": "string",
-                "description": "One-sentence verdict summarising the fit",
-            },
-            "strengths": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Resume highlights that align well with the role",
-            },
-            "gaps": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Required skills or experience absent from the resume",
-            },
-            "suggestions": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Concrete, actionable tips to strengthen the application",
-            },
-            "keywords_matched": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Job-posting keywords found in the resume",
-            },
-            "keywords_missing": {
-                "type": "array",
-                "items": {"type": "string"},
-                "description": "Important job-posting keywords absent from the resume",
-            },
-        },
-        "required": [
-            "match_score",
-            "verdict",
-            "strengths",
-            "gaps",
-            "suggestions",
-            "keywords_matched",
-            "keywords_missing",
-        ],
-    },
-}
-
-ANTHROPIC_SYSTEM = """\
-You are an expert recruiter and career coach. You will be given a candidate's resume and a job posting.
-Analyse how well the resume matches the role and call submit_analysis with your structured findings.
-Be specific, honest, and constructive. Focus on substance over formatting."""
 
 GROQ_SYSTEM = """\
 You are an expert recruiter and career coach. Analyse how well the provided resume matches the job posting.
@@ -164,26 +127,9 @@ async def fetch_job_posting(url: str) -> str:
     return soup.get_text(separator="\n", strip=True)
 
 
-def _analyze_anthropic(content: str) -> dict:
-    api_key = os.getenv("ANTHROPIC_API_KEY", "")
-    client = anthropic.Anthropic(api_key=api_key)
-    message = client.messages.create(
-        model=os.getenv("ANTHROPIC_MODEL", "claude-sonnet-4-6"),
-        max_tokens=1024,
-        system=ANTHROPIC_SYSTEM,
-        tools=[ANALYSIS_TOOL],
-        tool_choice={"type": "tool", "name": "submit_analysis"},
-        messages=[{"role": "user", "content": content}],
-    )
-    tool_block = next((b for b in message.content if b.type == "tool_use"), None)
-    if tool_block is None:
-        raise HTTPException(status_code=500, detail="Anthropic model did not return a structured analysis")
-    return tool_block.input
-
-
-def _analyze_groq(content: str) -> dict:
-    api_key = os.getenv("GROQ_API_KEY", "")
-    client = Groq(api_key=api_key)
+def _analyze_groq(content: str, groq_key: str) -> dict:
+    # The signed-in user's own key — the server never spends its own LLM quota
+    client = Groq(api_key=groq_key)
     try:
         response = client.chat.completions.create(
             model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
@@ -194,25 +140,16 @@ def _analyze_groq(content: str) -> dict:
                 {"role": "user", "content": content},
             ],
         )
+    except AuthenticationError:
+        raise HTTPException(
+            status_code=400, detail="Groq rejected your saved key — update it in Settings (/settings)"
+        ) from None
     except APIError as exc:
         raise HTTPException(status_code=502, detail=f"Groq model unavailable: {exc.message}") from exc
     try:
         return json.loads(response.choices[0].message.content)
     except (json.JSONDecodeError, IndexError, TypeError):
         raise HTTPException(status_code=500, detail="Groq model returned an unexpected response format") from None
-
-
-def _run_analysis(content: str) -> dict:
-    anthropic_key = os.getenv("ANTHROPIC_API_KEY", "")
-    groq_key = os.getenv("GROQ_API_KEY", "")
-    if anthropic_key:
-        return _analyze_anthropic(content)
-    if groq_key:
-        return _analyze_groq(content)
-    raise HTTPException(
-        status_code=500,
-        detail="No LLM provider configured. Set ANTHROPIC_API_KEY or GROQ_API_KEY.",
-    )
 
 
 # ── models ─────────────────────────────────────────────────────────────────────
@@ -296,6 +233,9 @@ async def ui(response: Response) -> str:
     .tag-red{background:#450a0a;color:#f87171}
     .error{background:#1a0a0a;border:1px solid #7f1d1d;border-radius:8px;padding:16px;color:#fca5a5;font-size:.9rem;display:none}
     .error.show{display:block}
+    .gate { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 14px 16px; border-radius: 12px; border: 1px solid #fbbf24; background: rgba(251, 191, 36, .1); font-size: .92rem; }
+    .gate[hidden] { display: none; }
+    .gate a.cta { background: #24292f; color: #fff; padding: 8px 14px; border-radius: 8px; font-weight: 600; text-decoration: none; white-space: nowrap; }
     footer{margin-top:48px;text-align:center;color:#525252;font-size:.85rem}
     footer a{color:#6366f1;text-decoration:none}
   </style>
@@ -306,6 +246,8 @@ async def ui(response: Response) -> str:
     <h1>Resume Analyzer</h1>
     <p class="subtitle">Upload your resume PDF and paste a job posting URL to get an AI-powered match analysis.</p>
   </header>
+
+  <div class="gate" id="gate" role="status" hidden></div>
 
   <div class="card">
     <div style="margin-bottom:20px">
@@ -414,6 +356,40 @@ async def ui(response: Response) -> str:
     renderItems(id, items, 'span', `tag ${cls}`);
   }
 
+  // Runs on the user's own Groq key: sign-in plus a saved key are required before analysing
+  const gate = document.getElementById('gate');
+  function setGate(state) {
+    const btn = document.getElementById('analyzeBtn');
+    if (state === 'ok') { gate.hidden = true; btn.disabled = false; return; }
+    const signin = state === 'signed-out';
+    gate.replaceChildren(
+      document.createTextNode(signin
+        ? 'Sign in with GitHub to use this app — it runs on your own Groq API key.'
+        : 'Add your Groq API key in Settings to use this app — usage is billed to your own Groq account.'),
+      Object.assign(document.createElement('a'), {
+        className: 'cta',
+        href: signin ? '/auth/login?next=/resume-analyzer' : '/settings',
+        textContent: signin ? 'Sign in with GitHub' : 'Open Settings',
+      }));
+    gate.hidden = false;
+    btn.disabled = true;
+  }
+  async function checkAccess() {
+    try {
+      const [me, keys] = await Promise.all([fetch('/auth/me'), fetch('/auth/keys')]);
+      if (me.status === 401) return setGate('signed-out');
+      const list = keys.ok ? await keys.json() : [];
+      setGate(list.some(k => k.provider === 'groq' && k.configured) ? 'ok' : 'no-key');
+    } catch { /* leave the form usable; the request itself will explain */ }
+  }
+  // A request can still be refused (expired session, key removed elsewhere)
+  function gateFromStatus(status) {
+    if (status === 401) { setGate('signed-out'); return true; }
+    if (status === 428) { setGate('no-key'); return true; }
+    return false;
+  }
+  checkAccess();
+
   async function analyze() {
     const file = fileInput.files[0];
     const url  = document.getElementById('jobUrl').value.trim();
@@ -434,6 +410,7 @@ async def ui(response: Response) -> str:
     try {
       const res  = await fetch('/resume-analyzer/analyze', { method: 'POST', body: form });
       const data = await res.json();
+      if (gateFromStatus(res.status)) return;
       if (!res.ok) { throw new Error(data.detail || 'Analysis failed'); }
 
       const circle = document.getElementById('scoreCircle');
@@ -452,7 +429,7 @@ async def ui(response: Response) -> str:
       err.textContent = e.message;
       err.classList.add('show');
     } finally {
-      document.getElementById('analyzeBtn').disabled = false;
+      document.getElementById('analyzeBtn').disabled = !gate.hidden;
       document.getElementById('spinner').classList.remove('show');
     }
   }
@@ -470,6 +447,7 @@ async def health() -> dict:
 async def analyze(
     resume: UploadFile = File(..., description="Resume as a PDF file"),
     job_url: str = Form(..., description="URL of the job posting"),
+    groq_key: str = Depends(auth.require_key("groq")),
 ) -> dict:
     # ── validate resume ──────────────────────────────────────────────────────
     if not (resume.filename or "").lower().endswith(".pdf"):
@@ -492,6 +470,6 @@ async def analyze(
     if not job_text.strip():
         raise HTTPException(status_code=422, detail="No readable text found at the job posting URL")
 
-    # ── run analysis (Anthropic preferred, Groq fallback) ────────────────────
+    # ── run analysis with the user's Groq key ────────────────────────────────
     content = f"## Resume\n\n{resume_text[:MAX_RESUME_CHARS]}\n\n## Job Posting\n\n{job_text[:MAX_JOB_CHARS]}"
-    return await run_in_threadpool(_run_analysis, content)
+    return await run_in_threadpool(_analyze_groq, content, groq_key)

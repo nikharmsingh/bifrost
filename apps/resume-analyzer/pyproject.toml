@@ -5,13 +5,18 @@ requires-python = ">=3.12"
 dependencies = [
     "fastapi>=0.115",
     "uvicorn[standard]>=0.29",
-    "anthropic>=0.25",
     "groq>=0.11",
     "httpx>=0.27",
     "pypdf>=4.0",
     "beautifulsoup4>=4.12",
     "python-multipart>=0.0.9",
+    "sqlalchemy>=2.0",
+    "psycopg[binary]>=3.2",
+    "bifrost-auth",
 ]
+
+[tool.uv.sources]
+bifrost-auth = { workspace = true }
 
 [tool.uv]
 package = false
