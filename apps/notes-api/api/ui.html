@@ -79,22 +79,6 @@
     .dirty { color: var(--warn); }
     .placeholder { padding: 48px 16px; text-align: center; color: var(--muted); }
 
-    .tokens { margin-top: 16px; padding: 16px; }
-    .tokens summary { cursor: pointer; font-weight: 600; font-size: .95rem; }
-    .tokens summary small { color: var(--muted); font-weight: 400; margin-left: 6px; }
-    .tokens-body { margin-top: 14px; display: flex; flex-direction: column; gap: 12px; }
-    .tokens-help { color: var(--muted); font-size: .85rem; }
-    .token-form { display: flex; gap: 8px; flex-wrap: wrap; }
-    .token-form input { flex: 1 1 220px; max-width: 320px; }
-    .new-token { border: 1px solid var(--ok); background: var(--ok-bg); border-radius: 8px; padding: 12px; display: flex; flex-direction: column; gap: 8px; }
-    .new-token p { font-size: .85rem; }
-    .new-token-row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
-    .new-token code { background: var(--bg); border: 1px solid var(--border); border-radius: 6px; padding: 6px 10px; word-break: break-all; flex: 1 1 260px; }
-    .token-list { list-style: none; display: flex; flex-direction: column; }
-    .token-list li { display: flex; gap: 12px; align-items: center; justify-content: space-between; padding: 10px 0; border-top: 1px solid var(--border); flex-wrap: wrap; }
-    .token-name { font-weight: 600; font-size: .9rem; }
-    .token-meta { color: var(--muted); font-size: .78rem; }
-
     .toast { position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%) translateY(20px); opacity: 0; pointer-events: none; transition: all .2s; background: var(--surface); border: 1px solid var(--border); border-radius: 10px; padding: 10px 16px; font-size: .9rem; box-shadow: 0 8px 24px rgba(0,0,0,.25); max-width: calc(100% - 32px); }
     .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
     .toast.error { border-color: var(--bad); color: var(--bad); }
@@ -150,25 +134,6 @@
           </form>
         </main>
       </div>
-
-      <details class="panel tokens" id="tokensPanel">
-        <summary>API tokens <small>for scripts and curl</small></summary>
-        <div class="tokens-body">
-          <p class="tokens-help">Tokens give the same access as your account, to your notes only. Send one as <code>Authorization: Bearer &lt;token&gt;</code>. See the <a href="/notes/docs">API docs</a>.</p>
-          <form class="token-form" id="tokenForm">
-            <input id="tokenName" maxlength="100" placeholder="Token name, e.g. laptop script" aria-label="Token name" required>
-            <button type="submit">Create token</button>
-          </form>
-          <div class="new-token" id="newToken" hidden>
-            <p><strong>Copy this token now.</strong> It won't be shown again.</p>
-            <div class="new-token-row">
-              <code id="newTokenValue"></code>
-              <button type="button" class="small" id="copyToken">Copy</button>
-            </div>
-          </div>
-          <ul class="token-list" id="tokenList"></ul>
-        </div>
-      </details>
     </div>
 
     <footer>Part of <a href="/">Bifrost</a> · <a href="/notes/docs">API docs</a></footer>
@@ -177,7 +142,7 @@
 
 <script>
   const $ = id => document.getElementById(id);
-  const state = { user: null, notes: [], selectedId: null, isNew: false, dirty: false, tokensLoaded: false };
+  const state = { user: null, notes: [], selectedId: null, isNew: false, dirty: false };
 
   let toastTimer;
   function toast(message, isError = false) {
@@ -194,7 +159,7 @@
     return d && !isNaN(d) ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
   }
 
-  // All note and token text is user content: built with textContent, never innerHTML
+  // Note text is user content: built with textContent, never innerHTML
   function el(tag, props = {}, children = []) {
     const node = document.createElement(tag);
     for (const [k, v] of Object.entries(props)) {
@@ -338,54 +303,6 @@
     }
   }
 
-  // ── API tokens ───────────────────────────────────────────────────────────
-
-  function renderTokens(tokens) {
-    $('tokenList').replaceChildren(...(tokens.length ? tokens.map(t => el('li', {}, [
-      el('div', {}, [
-        el('div', { class: 'token-name', text: t.name }),
-        el('div', { class: 'token-meta', text: `${t.display_prefix}… · created ${formatDate(t.created_at)} · ${t.last_used_at ? `last used ${formatDate(t.last_used_at)}` : 'never used'}` }),
-      ]),
-      el('button', { type: 'button', class: 'small danger', text: 'Revoke', onclick: () => revokeToken(t) }),
-    ])) : [el('li', { class: 'token-meta', text: 'No tokens yet.' })]));
-  }
-
-  async function loadTokens() {
-    try { renderTokens(await api('/notes/tokens')); state.tokensLoaded = true; }
-    catch (err) { toast(err.message, true); }
-  }
-
-  async function createToken(event) {
-    event.preventDefault();
-    const name = $('tokenName').value.trim();
-    if (!name) return;
-    try {
-      const created = await api('/notes/tokens', { method: 'POST', body: JSON.stringify({ name }) });
-      $('tokenName').value = '';
-      $('newTokenValue').textContent = created.token;
-      $('newToken').hidden = false;
-      await loadTokens();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  }
-
-  async function revokeToken(token) {
-    if (!confirm(`Revoke “${token.name}”? Scripts using it will stop working.`)) return;
-    try {
-      await api(`/notes/tokens/${encodeURIComponent(token.id)}`, { method: 'DELETE' });
-      toast('Token revoked');
-      await loadTokens();
-    } catch (err) {
-      toast(err.message, true);
-    }
-  }
-
-  async function copyToken() {
-    try { await navigator.clipboard.writeText($('newTokenValue').textContent); toast('Copied'); }
-    catch { toast('Copy failed — select the token and copy it manually.', true); }
-  }
-
   // ── startup ──────────────────────────────────────────────────────────────
 
   async function start() {
@@ -419,9 +336,6 @@
   $('title').addEventListener('input', markDirty);
   $('content').addEventListener('input', markDirty);
   $('logoutBtn').addEventListener('click', logout);
-  $('tokenForm').addEventListener('submit', createToken);
-  $('copyToken').addEventListener('click', copyToken);
-  $('tokensPanel').addEventListener('toggle', () => { if ($('tokensPanel').open && !state.tokensLoaded) loadTokens(); });
   document.addEventListener('keydown', e => {
     if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 's' && !$('editor').hidden) { e.preventDefault(); save(); }
   });

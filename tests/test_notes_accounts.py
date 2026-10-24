@@ -122,36 +122,12 @@ def test_pre_account_notes_are_claimed_only_by_the_configured_owner(db, monkeypa
     assert [n["id"] for n in owner.get("/notes").json()] == ["legacy"]
 
 
-def test_api_tokens_authenticate_and_can_be_revoked(db, monkeypatch):
-    c = sign_in(monkeypatch, OWNER)
-    created = c.post("/notes/tokens", json={"name": "script"}).json()
-    token = created["token"]
-    assert token.startswith("bnt_") and created["display_prefix"] == token[:10]
-
-    # Only the hash is stored
-    with db.connect() as conn:
-        stored = conn.execute(sa.select(notes.tokens_table.c.token_hash)).scalar_one()
-    assert stored == notes.hash_token(token) and token not in stored
-
-    api = client()
-    headers = {"Authorization": f"Bearer {token}"}
-    create_note(api, "From script", headers=headers)
-    assert [n["title"] for n in api.get("/notes", headers=headers).json()] == ["From script"]
-    assert c.get("/notes/tokens").json()[0]["last_used_at"] is not None
-
-    # A token can't mint more tokens
-    assert api.post("/notes/tokens", json={"name": "x"}, headers=headers).status_code == 401
-
-    assert c.delete(f"/notes/tokens/{created['id']}").status_code == 204
-    assert api.get("/notes", headers=headers).status_code == 401
-
-
-def test_users_cannot_revoke_each_others_tokens(db, monkeypatch):
-    owner = sign_in(monkeypatch, OWNER)
-    token_id = owner.post("/notes/tokens", json={"name": "mine"}).json()["id"]
-    other = sign_in(monkeypatch, OTHER)
-    assert other.delete(f"/notes/tokens/{token_id}").status_code == 404
-    assert len(owner.get("/notes/tokens").json()) == 1
+def test_bearer_tokens_are_not_accepted(db, monkeypatch):
+    # Notes is browser-only: the session cookie is the only way in
+    sign_in(monkeypatch, OWNER)
+    c = client()
+    assert c.get("/notes", headers={"Authorization": "Bearer bnt_anything"}).status_code == 401
+    assert c.get("/notes/tokens").status_code in (401, 404)
 
 
 def test_logout_clears_session(db, monkeypatch):
