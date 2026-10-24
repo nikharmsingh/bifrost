@@ -5,12 +5,12 @@ import pathlib
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from groq import Groq
+from groq import APIError, Groq
 from pydantic import BaseModel
 
 app = FastAPI(
     title="Code Reviewer",
-    description="AI code review that returns a score, issues and suggestions as structured JSON (Groq Llama 3.3).",
+    description="AI code review that returns a score, issues and suggestions as structured JSON (Groq).",
     version="0.1.0",
     docs_url="/code-review/docs",
     openapi_url="/code-review/openapi.json",
@@ -19,6 +19,9 @@ app = FastAPI(
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
 
 _client: Groq | None = None
+
+# Groq retires models periodically (llama-3.3-70b-versatile was shut down 2026-08-16) — override without a deploy
+GROQ_MODEL = os.getenv("GROQ_MODEL", "openai/gpt-oss-120b")
 
 
 def get_client() -> Groq:
@@ -105,17 +108,21 @@ def review_code(req: ReviewRequest) -> dict:
     if len(req.code) > 10_000:
         raise HTTPException(status_code=400, detail="code exceeds 10,000 character limit")
 
-    response = get_client().chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        max_tokens=2048,
-        messages=[
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Review this {req.language} code:\n\n```{req.language}\n{req.code}\n```"},
-        ],
-        response_format={"type": "json_object"},
-    )
+    try:
+        response = get_client().chat.completions.create(
+            model=GROQ_MODEL,
+            # Headroom for reasoning tokens, which count toward the limit on reasoning models
+            max_tokens=4096,
+            messages=[
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Review this {req.language} code:\n\n```{req.language}\n{req.code}\n```"},
+            ],
+            response_format={"type": "json_object"},
+        )
+    except APIError as exc:
+        raise HTTPException(status_code=502, detail=f"Review model unavailable: {exc.message}") from exc
 
     try:
         return json.loads(response.choices[0].message.content)
-    except (json.JSONDecodeError, IndexError):
+    except (json.JSONDecodeError, IndexError, TypeError):
         raise HTTPException(status_code=500, detail="Model returned an unexpected response format") from None

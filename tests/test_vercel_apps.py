@@ -112,3 +112,21 @@ def test_notes_ui_is_not_captured_as_note_id(monkeypatch):
     assert response.status_code == 200
     assert "<title>Notes</title>" in response.text
     assert ".innerHTML =" not in response.text
+
+
+def test_code_review_returns_502_when_groq_model_fails(monkeypatch):
+    import httpx
+    from groq import APIError
+
+    class FailingClient:
+        class chat:  # noqa: N801 — mirrors the Groq client's attribute layout
+            class completions:  # noqa: N801
+                @staticmethod
+                def create(**kwargs):
+                    assert kwargs["model"] == code_reviewer.GROQ_MODEL
+                    raise APIError("model_not_found", request=httpx.Request("POST", "https://api.groq.com"), body=None)
+
+    monkeypatch.setattr(code_reviewer, "get_client", lambda: FailingClient)
+    response = TestClient(code_reviewer.app).post("/code-review", json={"code": "print(1)"})
+    assert response.status_code == 502
+    assert "model_not_found" in response.json()["detail"]
