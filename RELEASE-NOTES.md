@@ -4,6 +4,23 @@ All notable changes to Bifrost are documented here.
 
 ---
 
+## [v0.10.0] — 2026-10-25
+
+### Added
+- **Uptime history on the dashboard.** Each app card shows 24 h and 7 d uptime, the average latency of successful checks, and a 24-hour bar strip: green when every check passed, amber for partial failures, red when all failed, grey with no data. A new **Uptime (24h)** tile shows the overall figure.
+- **`POST /status/check`** (`Authorization: Bearer $STATUS_CHECK_SECRET`) records every routed app's `/health` result in a Neon `health_checks` table, using the same discovery as the dashboard. Rows older than 8 days are pruned.
+- **`GET /status`** returns, per app, 24 h and 7 d uptime, average latency, the last result and 24 hourly buckets. It's edge-cached for 60 s.
+- **Status check workflow** (`.github/workflows/status-check.yml`) records a check every 10 minutes. It runs on GitHub Actions because Vercel's Hobby plan only runs crons once a day.
+
+### Changed
+- The dashboard's 🔒 tooltip now reads "Requires sign-in", replacing the outdated `X-API-Key` wording.
+
+### Upgrade notes
+- Set `STATUS_CHECK_SECRET` to the same value in Vercel and as a GitHub Actions secret.
+- GitHub pauses scheduled workflows after 60 days without repo activity. Any push resumes it.
+
+---
+
 ## [v0.9.0] — 2026-10-25
 
 ### ⚠️ Breaking
