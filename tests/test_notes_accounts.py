@@ -1,10 +1,11 @@
-from urllib.parse import parse_qs, urlparse
+"""Notes on top of shared sign-in: per-user isolation, legacy-note claiming and the schema migration."""
 
 import pytest
 import sqlalchemy as sa
 from fastapi.testclient import TestClient
 from sqlalchemy.pool import StaticPool
 
+import bifrost_auth
 from conftest import load_module
 
 notes = load_module("notes_api_accounts", "apps/notes-api/api/index.py")
@@ -18,84 +19,41 @@ def db(monkeypatch):
     engine = sa.create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     notes.migrate(engine)
     monkeypatch.setattr(notes, "engine", engine)
-    monkeypatch.setattr(notes, "SESSION_SECRET", "test-secret")
-    monkeypatch.setattr(notes, "GITHUB_CLIENT_ID", "client-id")
-    monkeypatch.setattr(notes, "GITHUB_CLIENT_SECRET", "client-secret")
     monkeypatch.setattr(notes, "NOTES_OWNER_GITHUB_LOGIN", "owner")
+    monkeypatch.setattr(notes, "_legacy_notes_claimed", False)
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
     return engine
 
 
-def client() -> TestClient:
-    # Session cookies are Secure, so the client must speak https to send them back
-    return TestClient(notes.app, base_url="https://testserver", follow_redirects=False)
+def signed_in(profile: dict) -> TestClient:
+    """A client holding a real signed Bifrost session (the OAuth flow itself is covered in test_auth)."""
+    user = notes.auth.upsert_github_user(profile)
+    return TestClient(
+        notes.app, base_url="https://testserver", cookies={bifrost_auth.SESSION_COOKIE: bifrost_auth.sign(user["id"])}
+    )
 
 
-def sign_in(monkeypatch, profile: dict) -> TestClient:
-    monkeypatch.setattr(notes, "exchange_code_for_github_user", lambda code, redirect_uri: profile)
-    c = client()
-    login = c.get("/notes/auth/login")
-    assert login.status_code == 302
-    state = parse_qs(urlparse(login.headers["location"]).query)["state"][0]
-    callback = c.get("/notes/auth/callback", params={"code": "abc", "state": state})
-    assert callback.status_code == 302 and callback.headers["location"] == "/notes/ui"
-    return c
-
-
-def create_note(c: TestClient, title: str = "Hello", **kwargs) -> dict:
-    response = c.post("/notes", json={"title": title, "content": "body"}, **kwargs)
+def create_note(c: TestClient, title: str = "Hello") -> dict:
+    response = c.post("/notes", json={"title": title, "content": "body"})
     assert response.status_code == 201
     return response.json()
 
 
 def test_unauthenticated_requests_are_rejected(db):
-    c = client()
+    c = TestClient(notes.app, base_url="https://testserver")
     assert c.get("/notes").status_code == 401
     assert c.post("/notes", json={"title": "x", "content": "y"}).status_code == 401
     assert c.get("/notes/me").status_code == 401
 
 
-def test_login_redirects_to_github_with_state(db):
-    response = client().get("/notes/auth/login")
-    location = urlparse(response.headers["location"])
-    assert location.netloc == "github.com"
-    query = parse_qs(location.query)
-    assert query["client_id"] == ["client-id"]
-    assert query["redirect_uri"] == ["https://testserver/notes/auth/callback"]
-    assert notes.STATE_COOKIE in response.cookies
+def test_shared_session_identifies_the_user(db):
+    assert signed_in(OWNER).get("/notes/me").json()["login"] == "Owner"
 
 
-def test_callback_rejects_missing_or_forged_state(db, monkeypatch):
-    monkeypatch.setattr(notes, "exchange_code_for_github_user", lambda code, redirect_uri: OWNER)
-    c = client()
-    assert c.get("/notes/auth/callback", params={"code": "abc", "state": "x"}).status_code == 400
-    c.get("/notes/auth/login")
-    assert c.get("/notes/auth/callback", params={"code": "abc", "state": "forged"}).status_code == 400
-
-
-def test_sign_in_creates_session(db, monkeypatch):
-    c = sign_in(monkeypatch, OWNER)
-    me = c.get("/notes/me").json()
-    assert me["login"] == "Owner" and me["name"] == "Owner Person"
-
-
-def test_tampered_session_cookie_is_rejected(db, monkeypatch):
-    session = sign_in(monkeypatch, OWNER).cookies.get(notes.SESSION_COOKIE)
-    tampered = session[:-1] + ("0" if session[-1] != "0" else "1")
-    # A fresh client sends only the tampered cookie
-    forged = TestClient(notes.app, base_url="https://testserver", cookies={notes.SESSION_COOKIE: tampered})
-    assert forged.get("/notes/me").status_code == 401
-    assert (
-        TestClient(notes.app, base_url="https://testserver", cookies={notes.SESSION_COOKIE: session})
-        .get("/notes/me")
-        .status_code
-        == 200
-    )
-
-
-def test_notes_are_private_to_their_owner(db, monkeypatch):
-    alice = sign_in(monkeypatch, OWNER)
+def test_notes_are_private_to_their_owner(db):
+    alice = signed_in(OWNER)
     note = create_note(alice)
-    bob = sign_in(monkeypatch, OTHER)
+    bob = signed_in(OTHER)
 
     assert bob.get("/notes").json() == []
     # Another user's note looks like it doesn't exist
@@ -108,51 +66,36 @@ def test_notes_are_private_to_their_owner(db, monkeypatch):
     assert alice.delete(f"/notes/{note['id']}").status_code == 204
 
 
-def test_pre_account_notes_are_claimed_only_by_the_configured_owner(db, monkeypatch):
+def test_pre_account_notes_are_claimed_only_by_the_configured_owner(db):
     with db.begin() as conn:
         conn.execute(
             sa.insert(notes.notes_table).values(
                 id="legacy", owner_id=None, title="Old", content="", created_at="2026-01-01", updated_at="2026-01-01"
             )
         )
-    stranger = sign_in(monkeypatch, OTHER)
-    assert stranger.get("/notes").json() == []
-
-    owner = sign_in(monkeypatch, OWNER)
-    assert [n["id"] for n in owner.get("/notes").json()] == ["legacy"]
+    assert signed_in(OTHER).get("/notes").json() == []
+    assert [n["id"] for n in signed_in(OWNER).get("/notes").json()] == ["legacy"]
 
 
-def test_bearer_tokens_are_not_accepted(db, monkeypatch):
-    # Notes is browser-only: the session cookie is the only way in
-    sign_in(monkeypatch, OWNER)
-    c = client()
+def test_bearer_tokens_are_not_accepted(db):
+    c = TestClient(notes.app, base_url="https://testserver")
     assert c.get("/notes", headers={"Authorization": "Bearer bnt_anything"}).status_code == 401
-    assert c.get("/notes/tokens").status_code in (401, 404)
 
 
-def test_logout_clears_session(db, monkeypatch):
-    c = sign_in(monkeypatch, OWNER)
-    assert c.post("/notes/auth/logout").status_code == 204
-    assert c.get("/notes/me").status_code == 401
-
-
-def test_sign_in_unconfigured_returns_503(db, monkeypatch):
-    monkeypatch.setattr(notes, "GITHUB_CLIENT_SECRET", "")
-    assert client().get("/notes/auth/login").status_code == 503
-
-
-def test_migrate_adds_owner_column_to_legacy_notes_table():
+def test_migrate_adds_owner_column_and_users_table_to_legacy_schema():
     engine = sa.create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
     with engine.begin() as conn:
         conn.execute(
             sa.text(
-                "CREATE TABLE notes (id VARCHAR PRIMARY KEY, title VARCHAR, content VARCHAR, created_at VARCHAR, updated_at VARCHAR)"
+                "CREATE TABLE notes (id VARCHAR PRIMARY KEY, title VARCHAR, content VARCHAR, "
+                "created_at VARCHAR, updated_at VARCHAR)"
             )
         )
         conn.execute(sa.text("INSERT INTO notes VALUES ('n1', 't', 'c', 'a', 'b')"))
     notes.migrate(engine)
     notes.migrate(engine)  # idempotent
-    columns = {c["name"] for c in sa.inspect(engine).get_columns("notes")}
-    assert "owner_id" in columns
+    inspector = sa.inspect(engine)
+    assert "owner_id" in {c["name"] for c in inspector.get_columns("notes")}
+    assert "users" in inspector.get_table_names()
     with engine.connect() as conn:
         assert conn.execute(sa.text("SELECT owner_id FROM notes WHERE id = 'n1'")).scalar() is None

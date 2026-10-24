@@ -73,9 +73,15 @@ def test_ui_does_not_render_model_output_as_html():
 
 
 def test_notes_without_database_returns_503(monkeypatch):
+    import bifrost_auth
+
     monkeypatch.setattr(notes, "engine", None)
-    client = TestClient(notes.app)
+    monkeypatch.setenv("SESSION_SECRET", "test-secret")
+    # A signed-in request reaches the user lookup, which reports the missing database instead of crashing
+    session = bifrost_auth.sign("some-user-id")
+    client = TestClient(notes.app, base_url="https://testserver", cookies={bifrost_auth.SESSION_COOKIE: session})
     assert client.get("/notes").status_code == 503
+    assert TestClient(notes.app).get("/notes/health").status_code == 503
 
 
 # ── app UIs ────────────────────────────────────────────────────────────────────

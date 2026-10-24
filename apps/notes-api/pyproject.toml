@@ -8,7 +8,11 @@ dependencies = [
     "httpx>=0.27",
     "sqlalchemy>=2.0",
     "psycopg[binary]>=3.2",
+    "bifrost-auth",
 ]
+
+[tool.uv.sources]
+bifrost-auth = { workspace = true }
 
 [tool.uv]
 package = false
