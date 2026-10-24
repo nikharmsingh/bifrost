@@ -1,24 +1,32 @@
+import asyncio
+import json
+import os
 import pathlib
 import random
+import re
+import time
 import uuid
 from datetime import UTC, datetime
 
-from fastapi import FastAPI, HTTPException
+import httpx
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
 
+ROOT_DIR = pathlib.Path(__file__).resolve().parents[3]
+
 
 def _read_version() -> str:
     try:
-        return (pathlib.Path(__file__).parents[3] / "VERSION").read_text().strip()
-    except (FileNotFoundError, IndexError):
+        return (ROOT_DIR / "VERSION").read_text().strip()
+    except FileNotFoundError:
         return "dev"
 
 
 app = FastAPI(
     title="Hello API",
-    description="A simple FastAPI app deployed on Vercel",
+    description="Bifrost dashboard plus quotes and utility endpoints.",
     version=_read_version(),
     docs_url="/docs",
     redoc_url="/redoc",
@@ -50,109 +58,209 @@ class Quote(BaseModel):
     author: str
 
 
-class Service(BaseModel):
+class Endpoint(BaseModel):
+    method: str
+    path: str
+    summary: str
+    auth: bool
+
+
+class Health(BaseModel):
+    ok: bool
+    status_code: int | None
+    latency_ms: int | None
+
+
+class AppInfo(BaseModel):
+    slug: str
     name: str
-    base: str
+    description: str
+    version: str
+    prefix: str
     docs: str
-    endpoints: list[str]
+    ui: str | None
+    health: Health
+    endpoints: list[Endpoint]
+
+
+class Release(BaseModel):
+    tag: str
+    name: str
+    url: str
+    published_at: str
 
 
 class Registry(BaseModel):
     name: str
     version: str
-    deployed_at: str
-    services: list[Service]
+    generated_at: str
+    release: Release | None
+    apps: list[AppInfo]
 
 
-SERVICES: list[Service] = [
-    Service(
-        name="Hello API",
-        base="/",
-        docs="/docs",
-        endpoints=["/health", "/quotes", "/quotes/random", "/quotes/{id}", "/utils/uuid", "/utils/timestamp"],
-    ),
-    Service(
-        name="Notes API",
-        base="/notes",
-        docs="/notes/docs",
-        endpoints=["GET /notes", "POST /notes", "GET /notes/{id}", "PUT /notes/{id}", "DELETE /notes/{id}"],
-    ),
-    Service(
-        name="Code Reviewer",
-        base="/code-review",
-        docs="/code-review/docs",
-        endpoints=["POST /code-review", "GET /code-review/health"],
-    ),
-    Service(
-        name="Resume Analyzer",
-        base="/resume-analyzer",
-        docs="/resume-analyzer/docs",
-        endpoints=["GET /resume-analyzer", "POST /resume-analyzer/analyze", "GET /resume-analyzer/health"],
-    ),
+# ── dashboard: app discovery ───────────────────────────────────────────────────
+
+REPO = "nikharmsingh/bifrost"
+REGISTRY_TTL_SECONDS = 30
+RELEASE_TTL_SECONDS = 600
+HTTP_METHODS = {"get", "post", "put", "patch", "delete"}
+
+# Used only if vercel.json isn't bundled with the function
+FALLBACK_ROUTES = [
+    {"src": "/code-review(.*)", "dest": "apps/code-reviewer/api/index.py"},
+    {"src": "/notes(.*)", "dest": "apps/notes-api/api/index.py"},
+    {"src": "/resume-analyzer(.*)", "dest": "apps/resume-analyzer/api/index.py"},
+    {"src": "/(.*)", "dest": "apps/hello-api/api/index.py"},
 ]
 
+_registry_cache: dict[str, tuple[float, Registry]] = {}
+_release_cache: tuple[float, Release | None] | None = None
 
-@app.get("/", response_class=HTMLResponse)
+
+def load_routes() -> list[tuple[str, str]]:
+    """Return (slug, prefix) for every app routed in vercel.json — the single source of truth for what's deployed."""
+    try:
+        routes = json.loads((ROOT_DIR / "vercel.json").read_text())["routes"]
+    except (OSError, KeyError, ValueError):
+        routes = FALLBACK_ROUTES
+    apps = []
+    for route in routes:
+        match = re.fullmatch(r"(/[\w-]*)\(\.\*\)", route.get("src", ""))
+        parts = route.get("dest", "").split("/")
+        prefix = match.group(1).rstrip("/") if match else ""
+        # Skip the root catch-all — that's this app, which hosts the dashboard rather than being one of the apps
+        if prefix and len(parts) > 2 and parts[0] == "apps":
+            apps.append((parts[1], prefix))
+    return apps
+
+
+def parse_endpoints(spec: dict) -> list[Endpoint]:
+    endpoints = []
+    for path, operations in spec.get("paths", {}).items():
+        for method, op in operations.items():
+            if method not in HTTP_METHODS:
+                continue
+            auth = any(
+                p.get("in") == "header" and p.get("name", "").lower() == "x-api-key" for p in op.get("parameters", [])
+            )
+            endpoints.append(Endpoint(method=method.upper(), path=path, summary=op.get("summary", ""), auth=auth))
+    return endpoints
+
+
+def find_ui_path(spec: dict, prefix: str) -> str | None:
+    """An app's own HTML page, if it serves one at its prefix (e.g. the Resume Analyzer UI)."""
+    op = spec.get("paths", {}).get(prefix, {}).get("get", {})
+    content = op.get("responses", {}).get("200", {}).get("content", {})
+    return prefix if "text/html" in content else None
+
+
+def http_client(base_url: str) -> httpx.AsyncClient:
+    return httpx.AsyncClient(base_url=base_url, timeout=5, follow_redirects=False)
+
+
+async def check_health(client: httpx.AsyncClient, prefix: str) -> Health:
+    started = time.perf_counter()
+    try:
+        response = await client.get(f"{prefix}/health")
+    except httpx.HTTPError:
+        return Health(ok=False, status_code=None, latency_ms=None)
+    latency = int((time.perf_counter() - started) * 1000)
+    return Health(ok=response.status_code == 200, status_code=response.status_code, latency_ms=latency)
+
+
+async def fetch_app(client: httpx.AsyncClient, slug: str, prefix: str) -> AppInfo:
+    async def fetch_spec() -> dict:
+        try:
+            response = await client.get(f"{prefix}/openapi.json")
+            return response.json() if response.status_code == 200 else {}
+        except (httpx.HTTPError, ValueError):
+            return {}
+
+    spec, health = await asyncio.gather(fetch_spec(), check_health(client, prefix))
+    info = spec.get("info", {})
+    return AppInfo(
+        slug=slug,
+        name=info.get("title", slug),
+        description=info.get("description", ""),
+        version=info.get("version", ""),
+        prefix=prefix,
+        docs=f"{prefix}/docs",
+        ui=find_ui_path(spec, prefix),
+        health=health,
+        endpoints=parse_endpoints(spec),
+    )
+
+
+async def fetch_latest_release() -> Release | None:
+    global _release_cache
+    if _release_cache and _release_cache[0] > time.monotonic():
+        return _release_cache[1]
+    release = None
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            response = await client.get(f"https://api.github.com/repos/{REPO}/releases/latest")
+        if response.status_code == 200:
+            data = response.json()
+            release = Release(
+                tag=data["tag_name"],
+                name=data.get("name") or data["tag_name"],
+                url=data["html_url"],
+                published_at=data.get("published_at") or "",
+            )
+    except (httpx.HTTPError, KeyError, ValueError):
+        pass
+    _release_cache = (time.monotonic() + RELEASE_TTL_SECONDS, release)
+    return release
+
+
+def resolve_base_url(request: Request) -> str:
+    if override := os.getenv("BIFROST_BASE_URL"):
+        return override.rstrip("/")
+    # Vercel terminates TLS at the edge, so trust its forwarded scheme
+    scheme = request.headers.get("x-forwarded-proto", request.url.scheme)
+    return f"{scheme}://{request.url.netloc}"
+
+
+async def build_registry(base_url: str) -> Registry:
+    cached = _registry_cache.get(base_url)
+    if cached and cached[0] > time.monotonic():
+        return cached[1]
+    async with http_client(base_url) as client:
+        apps, release = await asyncio.gather(
+            asyncio.gather(*(fetch_app(client, slug, prefix) for slug, prefix in load_routes())),
+            fetch_latest_release(),
+        )
+    registry = Registry(
+        name="Bifrost",
+        version=app.version,
+        generated_at=datetime.now(UTC).isoformat(),
+        release=release,
+        apps=sorted(apps, key=lambda a: a.name.lower()),
+    )
+    _registry_cache[base_url] = (time.monotonic() + REGISTRY_TTL_SECONDS, registry)
+    return registry
+
+
+def _load_dashboard_html() -> str:
+    try:
+        return (pathlib.Path(__file__).parent / "dashboard.html").read_text()
+    except FileNotFoundError:
+        return (
+            "<!DOCTYPE html><title>Bifrost</title><p>Dashboard unavailable — see <a href='/registry'>/registry</a>.</p>"
+        )
+
+
+DASHBOARD_HTML = _load_dashboard_html()
+
+
+@app.get("/", response_class=HTMLResponse, include_in_schema=False)
 async def root() -> str:
-    cards = ""
-    for s in SERVICES:
-        endpoints = "".join(f"<li><code>{e}</code></li>" for e in s.endpoints)
-        cards += f"""
-        <div class="card">
-            <div class="card-header">
-                <h2>{s.name}</h2>
-                <a href="{s.docs}" class="docs-btn">Docs ↗</a>
-            </div>
-            <p class="base">Base: <code>{s.base}</code></p>
-            <ul>{endpoints}</ul>
-        </div>"""
+    return DASHBOARD_HTML.replace("{{version}}", app.version)
 
-    return f"""<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Bifrost API</title>
-    <script defer src="/_vercel/speed-insights/script.js"></script>
-    <script defer src="/_vercel/insights/script.js"></script>
-    <style>
-        * {{ box-sizing: border-box; margin: 0; padding: 0; }}
-        body {{ font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #0a0a0a; color: #e5e5e5; min-height: 100vh; padding: 48px 24px; }}
-        .container {{ max-width: 900px; margin: 0 auto; }}
-        header {{ margin-bottom: 48px; }}
-        h1 {{ font-size: 2.5rem; font-weight: 700; background: linear-gradient(135deg, #6366f1, #a78bfa); -webkit-background-clip: text; -webkit-text-fill-color: transparent; }}
-        .meta {{ margin-top: 8px; color: #737373; font-size: 0.9rem; }}
-        .meta span {{ margin-right: 16px; }}
-        .grid {{ display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 20px; }}
-        .card {{ background: #141414; border: 1px solid #262626; border-radius: 12px; padding: 24px; transition: border-color 0.2s; }}
-        .card:hover {{ border-color: #6366f1; }}
-        .card-header {{ display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; }}
-        .card-header h2 {{ font-size: 1.1rem; font-weight: 600; }}
-        .docs-btn {{ font-size: 0.8rem; color: #6366f1; text-decoration: none; border: 1px solid #6366f1; padding: 4px 10px; border-radius: 6px; }}
-        .docs-btn:hover {{ background: #6366f1; color: white; }}
-        .base {{ font-size: 0.85rem; color: #737373; margin-bottom: 12px; }}
-        ul {{ list-style: none; display: flex; flex-direction: column; gap: 6px; }}
-        li code {{ font-size: 0.8rem; background: #1f1f1f; padding: 4px 8px; border-radius: 4px; color: #a78bfa; }}
-        footer {{ margin-top: 48px; text-align: center; color: #525252; font-size: 0.85rem; }}
-        footer a {{ color: #6366f1; text-decoration: none; }}
-    </style>
-</head>
-<body>
-    <div class="container">
-        <header>
-            <h1>⚡ Bifrost API</h1>
-            <div class="meta">
-                <span>v{app.version}</span>
-                <span><a href="https://github.com/nikharmsingh/bifrost" style="color:#6366f1">GitHub ↗</a></span>
-            </div>
-        </header>
-        <div class="grid">{cards}</div>
-        <footer>
-            <p>Built with FastAPI · Deployed on <a href="https://vercel.com">Vercel</a></p>
-        </footer>
-    </div>
-</body>
-</html>"""
+
+@app.get("/registry", response_model=Registry, summary="Live registry of deployed apps")
+async def registry(request: Request) -> Registry:
+    return await build_registry(resolve_base_url(request))
 
 
 @app.get("/health")

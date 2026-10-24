@@ -18,6 +18,7 @@ from pydantic import BaseModel
 
 app = FastAPI(
     title="Resume Analyzer",
+    description="Match a PDF resume against a job posting URL — match score, gaps and keywords (Claude or Groq).",
     version="0.1.0",
     docs_url="/resume-analyzer/docs",
     openapi_url="/resume-analyzer/openapi.json",

@@ -8,6 +8,7 @@ from pydantic import BaseModel
 
 app = FastAPI(
     title="Code Reviewer",
+    description="AI code review that returns a score, issues and suggestions as structured JSON (Groq Llama 3.3).",
     version="0.1.0",
     docs_url="/code-review/docs",
     openapi_url="/code-review/openapi.json",

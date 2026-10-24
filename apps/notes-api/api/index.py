@@ -39,6 +39,7 @@ async def lifespan(app: FastAPI):
 
 app = FastAPI(
     title="Notes API",
+    description="Create, read, update and delete notes stored in Neon Postgres. Writes require X-API-Key.",
     version="0.2.0",
     docs_url="/notes/docs",
     openapi_url="/notes/openapi.json",
@@ -71,6 +72,14 @@ class Note(BaseModel):
     content: str
     created_at: str
     updated_at: str
+
+
+# Declared before /notes/{note_id} so "health" isn't captured as a note id
+@app.get("/notes/health")
+def health() -> dict:
+    with require_db().connect() as conn:
+        conn.execute(sa.text("SELECT 1"))
+    return {"status": "ok"}
 
 
 @app.get("/notes", response_model=list[Note])
