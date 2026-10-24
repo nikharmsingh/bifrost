@@ -37,6 +37,12 @@
     .meta { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 16px; font-size: .875rem; color: var(--muted); }
     .pill { background: var(--surface-2); border: 1px solid var(--border); border-radius: 999px; padding: 2px 10px; color: var(--text); font-weight: 600; font-size: .8rem; }
     .meta img { height: 20px; display: block; }
+    .header-top { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; }
+    .account { display: flex; align-items: center; gap: 10px; font-size: .85rem; min-height: 32px; }
+    .account img { width: 28px; height: 28px; border-radius: 50%; border: 1px solid var(--border); }
+    .account .who small { display: block; color: var(--muted); font-size: .75rem; }
+    .signin { background: #24292f; color: #fff; border: none; border-radius: 8px; padding: 7px 14px; font-weight: 600; }
+    .signin:hover { background: #32383f; text-decoration: none; }
 
     .stats { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 12px; margin-bottom: 24px; }
     .stat { background: var(--surface); border: 1px solid var(--border); border-radius: 12px; padding: 16px 18px; }
@@ -91,7 +97,10 @@
 <body>
   <div class="container">
     <header>
-      <h1>⚡ Bifrost</h1>
+      <div class="header-top">
+        <h1>⚡ Bifrost</h1>
+        <div class="account" id="account" aria-live="polite"></div>
+      </div>
       <p class="tagline">Every app deployed from the Bifrost monorepo, with live status.</p>
       <div class="meta">
         <span class="pill">v{{version}}</span>
@@ -244,11 +253,37 @@
     }
   }
 
+  // Shared Bifrost sign-in: the session cookie covers every app on this domain
+  async function loadAccount() {
+    const account = document.getElementById('account');
+    let user = null;
+    try {
+      const res = await fetch('/auth/me');
+      if (res.ok) user = await res.json();
+    } catch {}
+    if (!user) {
+      account.replaceChildren(el('a', { class: 'signin', href: '/auth/login?next=/', text: 'Sign in with GitHub' }));
+      return;
+    }
+    const avatar = el('img', { alt: '' });
+    if (user.avatar_url && user.avatar_url.startsWith('https://')) avatar.src = user.avatar_url;
+    const signOut = el('button', { type: 'button', text: 'Sign out' });
+    signOut.addEventListener('click', async () => {
+      await fetch('/auth/logout', { method: 'POST' }).catch(() => {});
+      loadAccount();
+    });
+    account.replaceChildren(
+      avatar,
+      el('span', { class: 'who' }, [document.createTextNode(user.name || user.login), el('small', { text: `@${user.login}` })]),
+      signOut);
+  }
+
   search.addEventListener('input', render);
   refreshBtn.addEventListener('click', load);
   setInterval(renderUpdated, 5_000);
   setInterval(() => { if (!document.hidden) load(); }, AUTO_REFRESH_MS);
   load();
+  loadAccount();
 </script>
 </body>
 </html>

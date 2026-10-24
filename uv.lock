@@ -10,6 +10,7 @@ resolution-markers = [
 [manifest]
 members = [
     "bifrost",
+    "bifrost-auth",
     "code-reviewer",
     "code-runner",
     "coding-agent",
@@ -145,6 +146,23 @@ dev = [
 dev = [
     { name = "pytest", specifier = ">=8.0" },
     { name = "ruff", specifier = ">=0.6" },
+]
+
+[[package]]
+name = "bifrost-auth"
+version = "0.1.0"
+source = { editable = "packages/auth" }
+dependencies = [
+    { name = "fastapi" },
+    { name = "httpx" },
+    { name = "sqlalchemy" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "fastapi", specifier = ">=0.115" },
+    { name = "httpx", specifier = ">=0.27" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
 ]
 
 [[package]]
@@ -778,15 +796,21 @@ name = "hello-api"
 version = "0.1.0"
 source = { virtual = "apps/hello-api" }
 dependencies = [
+    { name = "bifrost-auth" },
     { name = "fastapi" },
     { name = "httpx" },
+    { name = "psycopg", extra = ["binary"] },
+    { name = "sqlalchemy" },
     { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.metadata]
 requires-dist = [
+    { name = "bifrost-auth", editable = "packages/auth" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
+    { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },
+    { name = "sqlalchemy", specifier = ">=2.0" },
     { name = "uvicorn", extras = ["standard"], specifier = ">=0.29" },
 ]
 
@@ -1420,6 +1444,7 @@ name = "notes-api"
 version = "0.1.0"
 source = { virtual = "apps/notes-api" }
 dependencies = [
+    { name = "bifrost-auth" },
     { name = "fastapi" },
     { name = "httpx" },
     { name = "psycopg", extra = ["binary"] },
@@ -1429,6 +1454,7 @@ dependencies = [
 
 [package.metadata]
 requires-dist = [
+    { name = "bifrost-auth", editable = "packages/auth" },
     { name = "fastapi", specifier = ">=0.115" },
     { name = "httpx", specifier = ">=0.27" },
     { name = "psycopg", extras = ["binary"], specifier = ">=3.2" },

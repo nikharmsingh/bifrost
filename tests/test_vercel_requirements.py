@@ -52,11 +52,24 @@ def _third_party_imports(path: Path) -> set[str]:
     return {m for m in modules if m not in sys.stdlib_module_names}
 
 
+# Shared packages apps load from the repo (packages/<name>/src/<module>) rather than from requirements.txt
+WORKSPACE_MODULES = {p.name: p for p in ROOT.glob("packages/*/src/*") if p.is_dir() and not p.name.startswith("_")}
+
+
+def _imports_including_workspace(entrypoint: Path) -> set[str]:
+    """Third-party imports of the app plus those of any workspace package it pulls in."""
+    modules = _third_party_imports(entrypoint)
+    for name in modules & WORKSPACE_MODULES.keys():
+        for source in WORKSPACE_MODULES[name].rglob("*.py"):
+            modules |= _third_party_imports(source)
+    return modules - WORKSPACE_MODULES.keys()
+
+
 @pytest.mark.parametrize("entrypoint", _vercel_apps(), ids=lambda p: p.parts[-3])
 def test_app_imports_are_in_its_vercel_requirements(entrypoint):
     requirements_file, requirements = _effective_requirements(entrypoint)
     missing = []
-    for module in sorted(_third_party_imports(entrypoint)):
+    for module in sorted(_imports_including_workspace(entrypoint)):
         dist = IMPORT_TO_DIST.get(module, module).lower()
         if dist not in requirements and PROVIDED_BY.get(module) not in requirements:
             missing.append(dist)

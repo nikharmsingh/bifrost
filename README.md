@@ -24,6 +24,8 @@
 | **Resume Analyzer** | [`/resume-analyzer`](https://bifrost-api.vercel.app/resume-analyzer) | PDF resume + job URL → match score, gaps, keywords (Claude, Groq fallback) | Public |
 | **Notes** | [`/notes/ui`](https://bifrost-api.vercel.app/notes/ui) | Private notes in Neon Postgres | GitHub sign-in |
 
+**One sign-in for every app:** sign in once (dashboard or any app) via GitHub at `/auth/login`; the `bifrost_session` cookie covers the whole site.
+
 Each app's API docs are at `<path>/docs`, e.g. [`/code-review/docs`](https://bifrost-api.vercel.app/code-review/docs).
 
 ## Structure
@@ -31,11 +33,12 @@ Each app's API docs are at `<path>/docs`, e.g. [`/code-review/docs`](https://bif
 ```
 bifrost/
 ├── apps/                  # Deployed to Vercel — one FastAPI function each
-│   ├── hello-api/         #   Dashboard (/) and /registry
+│   ├── hello-api/         #   Dashboard (/), /registry and shared sign-in (/auth/*)
 │   ├── code-reviewer/
 │   ├── resume-analyzer/
-│   └── notes-api/         #   GitHub OAuth, per-user notes
+│   └── notes-api/         #   Per-user notes
 ├── packages/              # Shared libraries (uv workspace members)
+│   ├── auth/              #   Shared GitHub sign-in (bifrost_auth)
 │   ├── core/              #   Settings, logging, types
 │   └── llm/               #   Anthropic client + streaming
 ├── apis/gateway/          # Streaming chat API (local / Docker; not deployed)
@@ -99,7 +102,8 @@ The code-runner MCP server for Claude Code / Claude Desktop:
 1. Create `apps/<name>/api/index.py` with a FastAPI app whose `docs_url` / `openapi_url` include the prefix (e.g. `/my-app/docs`), plus a `GET /my-app/health`.
 2. Add a `pyproject.toml` (copy one from `apps/`), and add any new dependencies to the root `requirements.txt`.
 3. In `vercel.json`, add a `builds` entry and a route **above** the `/(.*)` catch-all.
-4. Add tests under `tests/`, open a PR. Once merged, the dashboard lists the app automatically.
+4. Need users? Load `bifrost_auth` the way `apps/notes-api/api/index.py` does and use `Depends(auth.current_user)` — it reads the shared session.
+5. Add tests under `tests/`, open a PR. Once merged, the dashboard lists the app automatically.
 
 ## Configuration
 
@@ -109,7 +113,8 @@ All settings are environment variables — see [`.env.example`](.env.example) fo
 |---|---|
 | Code Reviewer | `GROQ_API_KEY` (optional `GROQ_MODEL`) |
 | Resume Analyzer | `ANTHROPIC_API_KEY` and/or `GROQ_API_KEY` |
-| Notes | `DATABASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET`, `NOTES_OWNER_GITHUB_LOGIN` |
+| Sign-in (hello-api + any app using it) | `DATABASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET`; GitHub OAuth callback `https://<host>/auth/callback` |
+| Notes | the sign-in settings, plus `NOTES_OWNER_GITHUB_LOGIN` |
 
 ## Releases
 

@@ -4,17 +4,38 @@ import os
 import pathlib
 import random
 import re
+import sys
 import time
 import uuid
+from contextlib import asynccontextmanager
 from datetime import UTC, datetime
 
 import httpx
+import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
 from pydantic import BaseModel
+from sqlalchemy.pool import NullPool
 
 ROOT_DIR = pathlib.Path(__file__).resolve().parents[3]
+
+# Vercel installs from requirements.txt, not the uv workspace, so load the shared auth package from the repo
+sys.path.insert(0, str(ROOT_DIR / "packages" / "auth" / "src"))
+from bifrost_auth import Auth  # noqa: E402
+
+DATABASE_URL = os.getenv("DATABASE_URL", "")
+# NullPool is required for serverless — Neon handles pooling via PgBouncer
+engine = sa.create_engine(DATABASE_URL, poolclass=NullPool) if DATABASE_URL else None
+
+
+def require_db() -> sa.Engine:
+    if not engine:
+        raise HTTPException(status_code=503, detail="DATABASE_URL is not configured")
+    return engine
+
+
+auth = Auth(require_db)
 
 
 def _read_version() -> str:
@@ -24,12 +45,20 @@ def _read_version() -> str:
         return "dev"
 
 
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    if engine:
+        auth.create_tables()
+    yield
+
+
 app = FastAPI(
     title="Hello API",
-    description="Bifrost dashboard plus quotes and utility endpoints.",
+    description="Bifrost dashboard, shared GitHub sign-in (/auth), plus quotes and utility endpoints.",
     version=_read_version(),
     docs_url="/docs",
     redoc_url="/redoc",
+    lifespan=lifespan,
 )
 
 app.add_middleware(
@@ -38,6 +67,9 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
+# One sign-in for every Bifrost app: /auth/login, /auth/callback, /auth/logout, /auth/me
+app.include_router(auth.router())
 
 QUOTES: list[dict] = [
     {"id": 1, "text": "Code is like humor. When you have to explain it, it's bad.", "author": "Cory House"},
