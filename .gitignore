@@ -29,6 +29,13 @@ env/
 # Claude Code — personal settings (shared .claude/settings.json stays tracked)
 .claude/settings.local.json
 
+# Neon agent tooling — per-developer, recreate with:
+#   npx neon@latest skills -s neon -s neon-postgres -y
+#   neon mcp --oauth --project --agent claude-code -y
+.claude/skills/
+skills-lock.json
+.mcp.json
+
 # IDE
 .vscode/
 .idea/
