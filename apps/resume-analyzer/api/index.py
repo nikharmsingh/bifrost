@@ -13,7 +13,7 @@ from fastapi import FastAPI, File, Form, HTTPException, UploadFile
 from fastapi.concurrency import run_in_threadpool
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse
-from groq import Groq
+from groq import APIError, Groq
 from pydantic import BaseModel
 
 app = FastAPI(
@@ -184,18 +184,21 @@ def _analyze_anthropic(content: str) -> dict:
 def _analyze_groq(content: str) -> dict:
     api_key = os.getenv("GROQ_API_KEY", "")
     client = Groq(api_key=api_key)
-    response = client.chat.completions.create(
-        model="llama-3.3-70b-versatile",
-        max_tokens=1024,
-        response_format={"type": "json_object"},
-        messages=[
-            {"role": "system", "content": GROQ_SYSTEM},
-            {"role": "user", "content": content},
-        ],
-    )
+    try:
+        response = client.chat.completions.create(
+            model=os.getenv("GROQ_MODEL", "openai/gpt-oss-120b"),
+            max_tokens=4096,
+            response_format={"type": "json_object"},
+            messages=[
+                {"role": "system", "content": GROQ_SYSTEM},
+                {"role": "user", "content": content},
+            ],
+        )
+    except APIError as exc:
+        raise HTTPException(status_code=502, detail=f"Groq model unavailable: {exc.message}") from exc
     try:
         return json.loads(response.choices[0].message.content)
-    except (json.JSONDecodeError, IndexError):
+    except (json.JSONDecodeError, IndexError, TypeError):
         raise HTTPException(status_code=500, detail="Groq model returned an unexpected response format") from None
 
 
