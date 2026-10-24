@@ -16,7 +16,7 @@
 
 ## Live apps
 
-**Dashboard: [bifrost-api.vercel.app](https://bifrost-api.vercel.app/)** — every app with live health, latency, endpoints and links. It's built from `vercel.json` and each app's `openapi.json`, so a newly routed app appears automatically ([raw data](https://bifrost-api.vercel.app/registry)).
+**Dashboard: [bifrost-api.vercel.app](https://bifrost-api.vercel.app/)** — every app with live health, latency, **24 h / 7 d uptime history**, endpoints and links. It's built from `vercel.json` and each app's `openapi.json`, so a newly routed app appears automatically ([raw data](https://bifrost-api.vercel.app/registry)).
 
 | App | UI | What it does | Access |
 |---|---|---|---|
@@ -59,6 +59,7 @@ bifrost/
 - **Routes** map a path prefix to an app; the `/(.*)` catch-all (hello-api) must stay last.
 - **Dependencies** are installed from the `requirements.txt` nearest each app: `apps/hello-api/requirements.txt` for hello-api, the root [`requirements.txt`](requirements.txt) for the rest — *not* from `pyproject.toml`. CI fails if an app imports something its file doesn't list.
 - **Database:** the Vercel–Neon integration gives each preview its own `preview/<branch>` database branch; [a workflow](.github/workflows/neon-preview-cleanup.yml) deletes it when the PR closes, so previews never hit Neon's branch cap.
+- **Uptime history:** [a scheduled workflow](.github/workflows/status-check.yml) calls `POST /status/check` every 10 minutes (Vercel Hobby crons only run daily); results live in Neon for 8 days and are served by [`/status`](https://bifrost-api.vercel.app/status).
 - **`main` is protected:** changes land via PR with a passing `check` job ([`ci.yml`](.github/workflows/ci.yml): ruff + pytest).
 
 ## Local development
@@ -116,6 +117,7 @@ All settings are environment variables — see [`.env.example`](.env.example) fo
 | Code Reviewer, Resume Analyzer | Sign-in settings + `KEY_ENCRYPTION_SECRET` (users supply their own Groq key; optional `GROQ_MODEL`) |
 | Sign-in (every app using it) | `DATABASE_URL`, `GITHUB_CLIENT_ID`, `GITHUB_CLIENT_SECRET`, `SESSION_SECRET`; GitHub OAuth callback `https://<host>/auth/callback` |
 | Notes | the sign-in settings, plus `NOTES_OWNER_GITHUB_LOGIN` |
+| Uptime history | `STATUS_CHECK_SECRET` — same value in Vercel and as a GitHub Actions secret |
 
 ## Releases
 

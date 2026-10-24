@@ -1,0 +1,22 @@
+name: Status check
+
+# Records every app's health for the dashboard's uptime history. Vercel's Hobby plan only runs crons
+# once a day, so a GitHub schedule drives it instead (free for public repos; GitHub may delay runs a
+# few minutes under load, and pauses schedules after 60 days without repo activity).
+on:
+  schedule:
+    - cron: "*/10 * * * *"
+  workflow_dispatch:
+
+jobs:
+  record:
+    runs-on: ubuntu-latest
+    timeout-minutes: 2
+    steps:
+      - name: Record health of every app
+        env:
+          STATUS_CHECK_SECRET: ${{ secrets.STATUS_CHECK_SECRET }}
+        run: |
+          curl --fail-with-body --silent --show-error --max-time 60 -X POST \
+            -H "Authorization: Bearer $STATUS_CHECK_SECRET" \
+            https://bifrost-api.vercel.app/status/check
