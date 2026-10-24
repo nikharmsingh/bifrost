@@ -120,3 +120,25 @@ def test_code_review_returns_502_when_groq_model_fails(monkeypatch):
     response = TestClient(code_reviewer.app).post("/code-review", json={"code": "print(1)"})
     assert response.status_code == 502
     assert "model_not_found" in response.json()["detail"]
+
+
+# ── edge caching ───────────────────────────────────────────────────────────────
+
+
+@pytest.mark.parametrize(
+    ("module", "path"),
+    [("hello", "/"), ("code_reviewer", "/code-review"), ("resume", "/resume-analyzer"), ("notes", "/notes/ui")],
+)
+def test_ui_pages_are_edge_cached_but_browsers_revalidate(module, path):
+    response = TestClient(globals()[module].app).get(path)
+    assert response.status_code == 200
+    assert "max-age=300" in response.headers["vercel-cdn-cache-control"]
+    assert response.headers["cache-control"] == "public, max-age=0, must-revalidate"
+    # A cached page must never carry a cookie or vary per visitor
+    assert "set-cookie" not in response.headers
+
+
+def test_personal_endpoints_are_never_edge_cached(monkeypatch):
+    monkeypatch.setattr(notes, "engine", None)
+    for path in ("/notes", "/notes/me"):
+        assert "vercel-cdn-cache-control" not in TestClient(notes.app).get(path).headers

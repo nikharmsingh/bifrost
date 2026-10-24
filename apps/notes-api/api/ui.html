@@ -306,17 +306,18 @@
   // ── startup ──────────────────────────────────────────────────────────────
 
   async function start() {
-    try {
-      showSignedIn(await api('/notes/me'));
-    } catch (err) {
-      if (!(err instanceof SignedOut)) { showSignedOut(); toast(err.message, true); }
+    // Both requests in parallel: each is a round trip to the function's region, so don't wait on one for the other
+    const [me, notes] = await Promise.allSettled([api('/notes/me'), api('/notes')]);
+    if (me.status === 'rejected') {
+      if (!(me.reason instanceof SignedOut)) { showSignedOut(); toast(me.reason.message, true); }
       return;
     }
-    try {
-      state.notes = await api('/notes');
+    showSignedIn(me.value);
+    if (notes.status === 'fulfilled') {
+      state.notes = notes.value;
       renderList();
-    } catch (err) {
-      $('notes').replaceChildren(el('li', { class: 'list-empty', text: err.message }));
+    } else {
+      $('notes').replaceChildren(el('li', { class: 'list-empty', text: notes.reason.message }));
     }
   }
 

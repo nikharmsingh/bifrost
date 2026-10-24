@@ -14,7 +14,7 @@ import httpx
 import sqlalchemy as sa
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel
 from sqlalchemy.pool import NullPool
 
@@ -290,13 +290,28 @@ def _load_dashboard_html() -> str:
 DASHBOARD_HTML = _load_dashboard_html()
 
 
+# Same for every visitor (personal data loads via JS), so serve it from Vercel's regional edge cache.
+# Browsers always revalidate; the edge refreshes in the background.
+PAGE_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=0, must-revalidate",
+    "Vercel-CDN-Cache-Control": "max-age=300, stale-while-revalidate=86400",
+}
+# Public, slow-changing data: short edge TTL so health stays current
+REGISTRY_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=0, must-revalidate",
+    "Vercel-CDN-Cache-Control": "max-age=30, stale-while-revalidate=300",
+}
+
+
 @app.get("/", response_class=HTMLResponse, include_in_schema=False)
-async def root() -> str:
+async def root(response: Response) -> str:
+    response.headers.update(PAGE_CACHE_HEADERS)
     return DASHBOARD_HTML.replace("{{version}}", app.version)
 
 
 @app.get("/registry", response_model=Registry, summary="Live registry of deployed apps")
-async def registry(request: Request) -> Registry:
+async def registry(request: Request, response: Response) -> Registry:
+    response.headers.update(REGISTRY_CACHE_HEADERS)
     return await build_registry(resolve_base_url(request))
 
 

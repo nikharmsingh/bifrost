@@ -4,7 +4,7 @@ import pathlib
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from groq import APIError, Groq
 from pydantic import BaseModel
 
@@ -90,8 +90,17 @@ def _load_ui() -> str:
 UI_HTML = _load_ui()
 
 
+# Same for every visitor (personal data loads via JS), so serve it from Vercel's regional edge cache.
+# Browsers always revalidate; the edge refreshes in the background.
+PAGE_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=0, must-revalidate",
+    "Vercel-CDN-Cache-Control": "max-age=300, stale-while-revalidate=86400",
+}
+
+
 @app.get("/code-review", response_class=HTMLResponse, summary="Code Reviewer UI")
-async def ui() -> str:
+async def ui(response: Response) -> str:
+    response.headers.update(PAGE_CACHE_HEADERS)
     return UI_HTML
 
 
