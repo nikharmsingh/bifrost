@@ -7,13 +7,11 @@ dependencies = [
     "langchain-anthropic>=0.1",
     "core",
     "llm",
-    "tools",
 ]
 
 [tool.uv.sources]
 core  = { workspace = true }
 llm   = { workspace = true }
-tools = { workspace = true }
 
 [tool.uv]
 package = false
