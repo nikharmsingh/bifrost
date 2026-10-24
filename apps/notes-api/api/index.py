@@ -8,7 +8,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from fastapi import Depends, FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, Response
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine
 from sqlalchemy.pool import NullPool
@@ -131,8 +131,18 @@ UI_HTML = _load_ui()
 
 
 # Fixed paths under /notes/ are declared before /notes/{note_id} so they aren't captured as note ids
+
+# Same for every visitor (personal data loads via JS), so serve it from Vercel's regional edge cache.
+# Browsers always revalidate; the edge refreshes in the background.
+PAGE_CACHE_HEADERS = {
+    "Cache-Control": "public, max-age=0, must-revalidate",
+    "Vercel-CDN-Cache-Control": "max-age=300, stale-while-revalidate=86400",
+}
+
+
 @app.get(UI_PATH, response_class=HTMLResponse, summary="Notes UI")
-def ui() -> str:
+def ui(response: Response) -> str:
+    response.headers.update(PAGE_CACHE_HEADERS)
     return UI_HTML
 
 
