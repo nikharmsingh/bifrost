@@ -1,4 +1,5 @@
 import os
+import pathlib
 import secrets
 from contextlib import asynccontextmanager
 from datetime import UTC, datetime
@@ -7,6 +8,7 @@ from uuid import uuid4
 import sqlalchemy as sa
 from fastapi import Depends, FastAPI, Header, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from pydantic import BaseModel, Field
 from sqlalchemy import create_engine
 from sqlalchemy.pool import NullPool
@@ -74,7 +76,22 @@ class Note(BaseModel):
     updated_at: str
 
 
-# Declared before /notes/{note_id} so "health" isn't captured as a note id
+def _load_ui() -> str:
+    try:
+        return (pathlib.Path(__file__).parent / "ui.html").read_text()
+    except FileNotFoundError:
+        return "<!DOCTYPE html><title>Notes</title><p>UI unavailable — see <a href='/notes/docs'>API docs</a>.</p>"
+
+
+UI_HTML = _load_ui()
+
+
+# /notes/ui and /notes/health are declared before /notes/{note_id} so they aren't captured as note ids
+@app.get("/notes/ui", response_class=HTMLResponse, summary="Notes UI")
+def ui() -> str:
+    return UI_HTML
+
+
 @app.get("/notes/health")
 def health() -> dict:
     with require_db().connect() as conn:

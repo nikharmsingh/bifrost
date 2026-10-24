@@ -1,8 +1,10 @@
 import json
 import os
+import pathlib
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import HTMLResponse
 from groq import Groq
 from pydantic import BaseModel
 
@@ -73,6 +75,21 @@ class ReviewResponse(BaseModel):
     issues: list[Issue]
     strengths: list[str]
     recommendation: str
+
+
+def _load_ui() -> str:
+    try:
+        return (pathlib.Path(__file__).parent / "ui.html").read_text()
+    except FileNotFoundError:
+        return "<!DOCTYPE html><title>Code Reviewer</title><p>UI unavailable — see <a href='/code-review/docs'>API docs</a>.</p>"
+
+
+UI_HTML = _load_ui()
+
+
+@app.get("/code-review", response_class=HTMLResponse, summary="Code Reviewer UI")
+async def ui() -> str:
+    return UI_HTML
 
 
 @app.get("/code-review/health")
