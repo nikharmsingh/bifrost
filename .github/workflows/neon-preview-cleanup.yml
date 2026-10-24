@@ -1,0 +1,21 @@
+name: Clean up Neon preview branch
+
+# The Vercel–Neon integration creates a database branch named preview/<git branch>
+# for every preview deployment and never deletes it. Neon caps branches per project,
+# so stale ones eventually make every new preview fail with "Resource provisioning failed".
+on:
+  pull_request:
+    types: [closed]
+
+jobs:
+  delete-preview-branch:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Delete preview/${{ github.event.pull_request.head.ref }}
+        uses: neondatabase/delete-branch-action@v3
+        # A PR closed before any preview was built has no branch to delete
+        continue-on-error: true
+        with:
+          project_id: ${{ vars.NEON_PROJECT_ID }}
+          branch: preview/${{ github.event.pull_request.head.ref }}
+          api_key: ${{ secrets.NEON_API_KEY }}
