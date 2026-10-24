@@ -81,6 +81,12 @@ def test_notes_write_requires_api_key_when_configured(monkeypatch):
     assert client.delete("/notes/abc").status_code == 401
 
 
+def test_notes_postgres_driver_is_installed():
+    # create_engine imports the dialect's default DBAPI — this is what crashed prod when the driver was missing
+    engine = notes.create_engine("postgresql://user:pass@localhost/db", poolclass=notes.NullPool)
+    assert engine.dialect.driver == "psycopg"
+
+
 def test_notes_without_database_returns_503(monkeypatch):
     monkeypatch.setattr(notes, "engine", None)
     monkeypatch.setattr(notes, "NOTES_API_KEY", "")
