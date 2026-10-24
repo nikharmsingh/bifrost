@@ -4,6 +4,36 @@ All notable changes to Bifrost are documented here.
 
 ---
 
+## [v0.7.0] — 2026-10-24
+
+### Security
+- **Resume Analyzer XSS** — analysis results are now rendered with `textContent` instead of `innerHTML`. Model output is derived from untrusted job pages, so a crafted posting could previously inject script into the UI.
+- **Resume Analyzer SSRF guard** — job posting URLs must be `http(s)` and resolve only to public IP addresses. Redirects are followed manually (max 5) and every hop is re-checked, so internal/metadata addresses can't be reached via a redirect.
+- **Gateway auth & model allowlist** — `/chat/stream` requires an `X-API-Key` header when `GATEWAY_API_KEY` is set. Callers may only use `DEFAULT_MODEL` or models listed in `ALLOWED_MODELS`; prompt and system-prompt lengths are capped.
+- **Notes API write protection** — create/update/delete require an `X-API-Key` header when `NOTES_API_KEY` is set. Reads stay public.
+- **Code Runner MCP** — documented that it is not a sandbox, capped the timeout at 30s, and handled timeouts instead of crashing the tool.
+
+### Fixed
+- **Notes API 500 errors** — SQLAlchemy 2.1 made psycopg 3 the default Postgres driver, so `/notes` failed with `No module named 'psycopg'`. Switched from `psycopg2-binary` to `psycopg[binary]`.
+- **Event loop blocking** — synchronous Groq/Anthropic/SQLAlchemy calls no longer run inside `async def` handlers (Code Reviewer, Notes API, Resume Analyzer).
+- **`ALLOWED_ORIGINS` parsing** — `core.Settings` now accepts comma-separated values (the same format the Vercel apps use); the previously documented plain-URL value failed to parse.
+
+### Added
+- **CI workflow** (`.github/workflows/ci.yml`) — runs `ruff check`, `ruff format --check`, and `pytest` on every pull request and push to `main`.
+- **Test suite** (`tests/`) — 17 tests covering the SSRF guard, XSS fix, API-key checks, model allowlist, settings parsing, and the Postgres driver.
+- **Configurable models** — `DEFAULT_MODEL` (gateway, agents, `llm` package) and `ANTHROPIC_MODEL` (Resume Analyzer). Default is unchanged.
+- **`uv.lock` committed** — Dockerfiles use `uv sync --frozen`, which requires it.
+
+### Changed
+- `main` is now a protected branch: changes land via pull request with a passing `check` job.
+- Applied `ruff format` repo-wide; `.env.example` documents `GROQ_API_KEY`, `DATABASE_URL`, and the new API-key/model settings.
+- `.gitignore` now covers `.vercel/`, `.claude/settings.local.json`, and extra tooling caches.
+
+### Upgrade notes
+- Set `NOTES_API_KEY` (and `GATEWAY_API_KEY` if you deploy the gateway) — until set, those endpoints remain unauthenticated.
+
+---
+
 ## [v0.6.1] — 2026-05-25
 
 ### Fixed
