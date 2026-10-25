@@ -2,9 +2,11 @@ import asyncio
 import io
 import ipaddress
 import json
+import logging
 import os
 import pathlib
 import sys
+from contextlib import asynccontextmanager
 from urllib.parse import urljoin, urlparse
 
 import httpx
@@ -17,11 +19,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from groq import APIError, AuthenticationError, Groq
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
 
 # Vercel installs from requirements.txt, not the uv workspace, so load the shared auth package from the repo
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "packages" / "auth" / "src"))
-from bifrost_auth import Auth  # noqa: E402
+from bifrost_auth import Auth, runs  # noqa: E402
+
+APP_SLUG = "resume-analyzer"
+log = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 # NullPool is required for serverless — Neon handles pooling via PgBouncer
@@ -36,16 +42,31 @@ def require_db() -> sa.Engine:
 
 auth = Auth(require_db)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # History lives in the shared ai_runs table, which a fresh database may not have yet
+    if engine:
+        auth.create_tables()
+    yield
+
+
 app = FastAPI(
     title="Resume Analyzer",
     description="Match a PDF resume against a job posting URL — match score, gaps and keywords. Uses your own Groq key.",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/resume-analyzer/docs",
     openapi_url="/resume-analyzer/openapi.json",
+    lifespan=lifespan,
 )
 
 _allowed_origins = os.getenv("ALLOWED_ORIGINS", "*").split(",")
 app.add_middleware(CORSMiddleware, allow_origins=_allowed_origins, allow_methods=["*"], allow_headers=["*"])
+
+# Share links show the job and the analysis, not the resume's file name (often the person's name)
+app.include_router(
+    runs.router(auth.current_user, require_db, APP_SLUG, "/resume-analyzer", public_input={"job_url", "job_title"})
+)
 
 MAX_RESUME_CHARS = 5_000
 MAX_JOB_CHARS = 5_000
@@ -92,7 +113,8 @@ async def assert_public_url(url: str) -> None:
             raise HTTPException(status_code=422, detail="Job posting URL must point to a public host")
 
 
-async def fetch_job_posting(url: str) -> str:
+async def fetch_job_posting(url: str) -> tuple[str, str]:
+    """(page title, readable text) of the job posting."""
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) "
@@ -122,12 +144,14 @@ async def fetch_job_posting(url: str) -> str:
         raise HTTPException(status_code=422, detail=f"Could not fetch job posting: {exc}") from exc
 
     soup = BeautifulSoup(response.text, "html.parser")
+    title = soup.title.get_text(" ", strip=True) if soup.title else ""
     for tag in soup(["script", "style", "nav", "header", "footer", "aside", "form"]):
         tag.decompose()
-    return soup.get_text(separator="\n", strip=True)
+    return title, soup.get_text(separator="\n", strip=True)
 
 
-def _analyze_groq(content: str, groq_key: str) -> dict:
+def _analyze_groq(content: str, groq_key: str) -> tuple[dict, tuple[int | None, int | None]]:
+    """The analysis and its (prompt, completion) token counts."""
     # The signed-in user's own key — the server never spends its own LLM quota
     client = Groq(api_key=groq_key)
     try:
@@ -147,9 +171,10 @@ def _analyze_groq(content: str, groq_key: str) -> dict:
     except APIError as exc:
         raise HTTPException(status_code=502, detail=f"Groq model unavailable: {exc.message}") from exc
     try:
-        return json.loads(response.choices[0].message.content)
-    except (json.JSONDecodeError, IndexError, TypeError):
+        analysis = AnalysisResult.model_validate(json.loads(response.choices[0].message.content))
+    except (ValueError, IndexError, TypeError):
         raise HTTPException(status_code=500, detail="Groq model returned an unexpected response format") from None
+    return analysis.model_dump(exclude={"run_id"}), runs.token_counts(response)
 
 
 # ── models ─────────────────────────────────────────────────────────────────────
@@ -163,6 +188,8 @@ class AnalysisResult(BaseModel):
     suggestions: list[str]
     keywords_matched: list[str]
     keywords_missing: list[str]
+    # Id in your history (None if it couldn't be saved)
+    run_id: str | None = None
 
 
 # ── routes ─────────────────────────────────────────────────────────────────────
@@ -236,6 +263,29 @@ async def ui(response: Response) -> str:
     .gate { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 14px 16px; border-radius: 12px; border: 1px solid #fbbf24; background: rgba(251, 191, 36, .1); font-size: .92rem; }
     .gate[hidden] { display: none; }
     .gate a.cta { background: #24292f; color: #fff; padding: 8px 14px; border-radius: 8px; font-weight: 600; text-decoration: none; white-space: nowrap; }
+    [hidden]{display:none !important}
+    .ghost{width:auto;padding:6px 12px;font-size:.8rem;font-weight:500;background:transparent;border:1px solid #333;color:#e5e5e5}
+    .ghost:hover{border-color:#6366f1;opacity:1}
+    .ghost.danger{color:#f87171}
+    .result-bar{display:flex;flex-wrap:wrap;gap:8px;align-items:center;justify-content:space-between;margin-bottom:20px;padding-bottom:16px;border-bottom:1px solid #262626}
+    .result-bar .when{font-size:.8rem;color:#737373}
+    .share-box{display:flex;gap:8px;flex-wrap:wrap;align-items:center;margin-bottom:6px}
+    .share-box input{flex:1 1 240px;width:auto;font-size:.8rem;padding:7px 10px;font-family:ui-monospace,Menlo,monospace}
+    .hint{font-size:.8rem;color:#737373;margin-bottom:16px}
+    .shared-banner{display:flex;flex-wrap:wrap;gap:12px;align-items:center;justify-content:space-between;margin-bottom:16px;padding:14px 16px;border-radius:12px;border:1px solid #6366f1;background:rgba(99,102,241,.1);font-size:.92rem}
+    .shared-banner a,.job-link{color:#a78bfa;text-decoration:none}
+    .job-line{font-size:.9rem;color:#a3a3a3;margin-bottom:16px;overflow-wrap:anywhere}
+    .history-list{list-style:none;gap:0}
+    .history-list li{padding:0;display:flex;align-items:center;gap:8px;border-top:1px solid #262626}
+    .history-list li:first-child{border-top:none}
+    .history-list li::before{content:none}
+    .history-open{flex:1;min-width:0;width:auto;display:flex;align-items:center;gap:12px;padding:10px 4px;background:none;border-radius:6px;color:#e5e5e5;font-size:.88rem;font-weight:400;text-align:left}
+    .history-open:hover,.history-open.current{background:#1c1c1c;opacity:1}
+    .pill{flex-shrink:0;min-width:38px;text-align:center;font-size:.78rem;font-weight:700;padding:2px 8px;border-radius:999px;background:#1c1c1c}
+    .history-title{flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .history-meta{flex-shrink:0;font-size:.75rem;color:#737373}
+    .history-delete{width:auto;background:none;color:#525252;padding:6px 8px;font-size:1rem;line-height:1}
+    .history-delete:hover{color:#f87171;opacity:1}
     footer{margin-top:48px;text-align:center;color:#525252;font-size:.85rem}
     footer a{color:#6366f1;text-decoration:none}
   </style>
@@ -248,8 +298,12 @@ async def ui(response: Response) -> str:
   </header>
 
   <div class="gate" id="gate" role="status" hidden></div>
+  <div class="shared-banner" id="sharedBanner" hidden>
+    <span>📎 A shared resume match — read-only.</span>
+    <a href="/resume-analyzer">Analyze your own resume →</a>
+  </div>
 
-  <div class="card">
+  <div class="card" id="formCard">
     <div style="margin-bottom:20px">
       <label>Resume (PDF)</label>
       <div class="drop-zone" id="dropZone">
@@ -275,6 +329,19 @@ async def ui(response: Response) -> str:
 
   <div id="results">
     <div class="card">
+      <div class="result-bar" id="resultBar" hidden>
+        <span class="when" id="resultWhen"></span>
+        <button type="button" class="ghost" id="shareBtn">Share link</button>
+      </div>
+      <div id="shareArea" hidden>
+        <div class="share-box">
+          <input type="text" id="shareUrl" readonly aria-label="Share link"/>
+          <button type="button" class="ghost" id="copyBtn">Copy</button>
+          <button type="button" class="ghost danger" id="unshareBtn">Stop sharing</button>
+        </div>
+        <p class="hint">Anyone with the link sees the job link and this analysis — never your resume or its file name.</p>
+      </div>
+      <p class="job-line" id="jobLine" hidden></p>
       <div class="score-row">
         <div class="score-circle" id="scoreCircle">
           <span class="score-num" id="scoreNum">-</span>
@@ -304,6 +371,11 @@ async def ui(response: Response) -> str:
         <div class="tags" id="missingTags"></div>
       </div>
     </div>
+  </div>
+
+  <div class="card" id="historyCard" hidden>
+    <p class="section-title purple" id="historyHeading">✦ Your history</p>
+    <ul class="history-list" id="historyList"></ul>
   </div>
 
   <footer><p><a href="/">← Back to Bifrost API</a></p></footer>
@@ -380,6 +452,7 @@ async def ui(response: Response) -> str:
       if (me.status === 401) return setGate('signed-out');
       const list = keys.ok ? await keys.json() : [];
       setGate(list.some(k => k.provider === 'groq' && k.configured) ? 'ok' : 'no-key');
+      loadHistory();
     } catch { /* leave the form usable; the request itself will explain */ }
   }
   // A request can still be refused (expired session, key removed elsewhere)
@@ -388,7 +461,156 @@ async def ui(response: Response) -> str:
     if (status === 428) { setGate('no-key'); return true; }
     return false;
   }
-  checkAccess();
+  const $ = id => document.getElementById(id);
+  // The run on screen: { id, share_path, created_at } — null for shared/unsaved views
+  let currentRun = null;
+  let history = [];
+
+  function formatDate(iso) {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  }
+
+  function showError(message) {
+    $('errorBox').textContent = message;
+    $('errorBox').classList.add('show');
+  }
+
+  function renderResult(data, input) {
+    const circle = $('scoreCircle');
+    circle.style.background = `conic-gradient(${scoreColor(data.match_score)} ${data.match_score}%, #262626 0)`;
+    $('scoreNum').textContent = data.match_score;
+    $('verdict').textContent = data.verdict;
+    renderList('strengthsList', data.strengths);
+    renderList('gapsList', data.gaps);
+    renderList('suggestionsList', data.suggestions);
+    renderTags('matchedTags', data.keywords_matched, 'tag-green');
+    renderTags('missingTags', data.keywords_missing, 'tag-red');
+
+    // Job link from history/shared runs — only ever an http(s) URL, set via href/textContent
+    const job = input && input.job_url;
+    $('jobLine').hidden = !job;
+    if (job) {
+      const link = Object.assign(document.createElement('a'), { className: 'job-link', textContent: input.job_title || job, target: '_blank', rel: 'noopener noreferrer' });
+      if (job.startsWith('https://') || job.startsWith('http://')) link.href = job;
+      $('jobLine').replaceChildren(document.createTextNode('Job: '), link);
+    }
+    renderShare();
+    $('results').classList.add('show');
+  }
+
+  // ── share links ──────────────────────────────────────────────────────────
+
+  function renderShare() {
+    $('resultBar').hidden = !currentRun;
+    $('shareArea').hidden = !(currentRun && currentRun.share_path);
+    if (!currentRun) return;
+    $('resultWhen').textContent = `Saved to your history · ${formatDate(currentRun.created_at)}`;
+    $('shareBtn').hidden = Boolean(currentRun.share_path);
+    if (currentRun.share_path) $('shareUrl').value = new URL(currentRun.share_path, location.origin).href;
+  }
+
+  async function historyApi(path, options) {
+    const res = await fetch(`/resume-analyzer/history${path}`, options);
+    if (gateFromStatus(res.status)) throw new Error('Please sign in again.');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(typeof data.detail === 'string' ? data.detail : `Request failed (${res.status})`);
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  async function copyShareUrl() {
+    try { await navigator.clipboard.writeText($('shareUrl').value); $('copyBtn').textContent = 'Copied'; }
+    catch { $('shareUrl').select(); }
+    setTimeout(() => { $('copyBtn').textContent = 'Copy'; }, 1500);
+  }
+
+  $('shareBtn').addEventListener('click', async () => {
+    try {
+      const link = await historyApi(`/${encodeURIComponent(currentRun.id)}/share`, { method: 'POST' });
+      currentRun.share_path = link.share_path;
+      renderShare();
+      copyShareUrl();
+      loadHistory();
+    } catch (e) { showError(e.message); }
+  });
+  $('copyBtn').addEventListener('click', copyShareUrl);
+  $('unshareBtn').addEventListener('click', async () => {
+    if (!confirm('Stop sharing? The link will stop working for everyone.')) return;
+    try {
+      await historyApi(`/${encodeURIComponent(currentRun.id)}/share`, { method: 'DELETE' });
+      currentRun.share_path = null;
+      renderShare();
+      loadHistory();
+    } catch (e) { showError(e.message); }
+  });
+
+  // ── history ──────────────────────────────────────────────────────────────
+
+  function renderHistory() {
+    $('historyCard').hidden = !history.length;
+    $('historyHeading').textContent = `✦ Your history · ${history.length} saved`;
+    $('historyList').replaceChildren(...history.map(item => {
+      const open = Object.assign(document.createElement('button'), { type: 'button', className: `history-open${currentRun && currentRun.id === item.id ? ' current' : ''}` });
+      const pill = Object.assign(document.createElement('span'), { className: 'pill', textContent: item.score ?? '–' });
+      if (item.score != null) pill.style.color = scoreColor(item.score);
+      open.append(
+        pill,
+        Object.assign(document.createElement('span'), { className: 'history-title', textContent: item.title }),
+        Object.assign(document.createElement('span'), { className: 'history-meta', textContent: `${item.shared ? '🔗 ' : ''}${formatDate(item.created_at)}` }));
+      open.addEventListener('click', () => openRun(item.id));
+      const del = Object.assign(document.createElement('button'), { type: 'button', className: 'history-delete', textContent: '×', title: 'Delete from history' });
+      del.setAttribute('aria-label', `Delete “${item.title}” from history`);
+      del.addEventListener('click', () => deleteRun(item));
+      const li = document.createElement('li');
+      li.append(open, del);
+      return li;
+    }));
+  }
+
+  async function loadHistory() {
+    try { history = await historyApi(''); renderHistory(); } catch { /* history is optional */ }
+  }
+
+  async function openRun(id) {
+    $('errorBox').classList.remove('show');
+    try {
+      const run = await historyApi(`/${encodeURIComponent(id)}`);
+      currentRun = run;
+      renderResult(run.result, run.input);
+      renderHistory();
+      $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    } catch (e) { showError(e.message); }
+  }
+
+  async function deleteRun(item) {
+    if (!confirm(`Delete “${item.title}” from your history?${item.shared ? ' Its share link will stop working.' : ''}`)) return;
+    try {
+      await historyApi(`/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+      if (currentRun && currentRun.id === item.id) { currentRun = null; renderShare(); }
+      history = history.filter(h => h.id !== item.id);
+      renderHistory();
+    } catch (e) { showError(e.message); }
+  }
+
+  // ── shared view (?shared=…): read-only, no sign-in ───────────────────────
+
+  async function showShared(shareId) {
+    $('formCard').hidden = true;
+    $('sharedBanner').hidden = false;
+    document.title = 'Shared match · Resume Analyzer';
+    try {
+      const res = await fetch(`/resume-analyzer/shared/${encodeURIComponent(shareId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'This link is not available.');
+      renderResult(data.result, data.input);
+    } catch (e) { showError(e.message); }
+  }
+
+  const sharedId = new URLSearchParams(location.search).get('shared');
+  if (sharedId) showShared(sharedId);
+  else checkAccess();
 
   async function analyze() {
     const file = fileInput.files[0];
@@ -413,18 +635,9 @@ async def ui(response: Response) -> str:
       if (gateFromStatus(res.status)) return;
       if (!res.ok) { throw new Error(data.detail || 'Analysis failed'); }
 
-      const circle = document.getElementById('scoreCircle');
-      const color  = scoreColor(data.match_score);
-      circle.style.background = `conic-gradient(${color} ${data.match_score}%, #262626 0)`;
-      document.getElementById('scoreNum').textContent  = data.match_score;
-      document.getElementById('verdict').textContent   = data.verdict;
-      renderList('strengthsList',  data.strengths);
-      renderList('gapsList',       data.gaps);
-      renderList('suggestionsList', data.suggestions);
-      renderTags('matchedTags', data.keywords_matched, 'tag-green');
-      renderTags('missingTags', data.keywords_missing, 'tag-red');
-
-      document.getElementById('results').classList.add('show');
+      currentRun = data.run_id ? { id: data.run_id, share_path: null, created_at: new Date().toISOString() } : null;
+      renderResult(data, null);
+      if (data.run_id) loadHistory();
     } catch (e) {
       err.textContent = e.message;
       err.classList.add('show');
@@ -448,6 +661,7 @@ async def analyze(
     resume: UploadFile = File(..., description="Resume as a PDF file"),
     job_url: str = Form(..., description="URL of the job posting"),
     groq_key: str = Depends(auth.require_key("groq")),
+    user: dict = Depends(auth.current_user),
 ) -> dict:
     # ── validate resume ──────────────────────────────────────────────────────
     if not (resume.filename or "").lower().endswith(".pdf"):
@@ -466,10 +680,28 @@ async def analyze(
         raise HTTPException(status_code=422, detail="No text could be extracted from the PDF (scanned image?)")
 
     # ── fetch job posting ────────────────────────────────────────────────────
-    job_text = await fetch_job_posting(job_url)
+    job_title, job_text = await fetch_job_posting(job_url)
     if not job_text.strip():
         raise HTTPException(status_code=422, detail="No readable text found at the job posting URL")
 
     # ── run analysis with the user's Groq key ────────────────────────────────
     content = f"## Resume\n\n{resume_text[:MAX_RESUME_CHARS]}\n\n## Job Posting\n\n{job_text[:MAX_JOB_CHARS]}"
-    return await run_in_threadpool(_analyze_groq, content, groq_key)
+    result, tokens = await run_in_threadpool(_analyze_groq, content, groq_key)
+
+    # The resume itself isn't kept — only the file name, the job link and the analysis
+    try:
+        run_id = await run_in_threadpool(
+            runs.record,
+            require_db(),
+            user["id"],
+            APP_SLUG,
+            title=(job_title or urlparse(job_url).hostname or job_url)[:120],
+            score=result["match_score"],
+            input={"job_url": job_url, "job_title": job_title, "file_name": resume.filename},
+            result=result,
+            tokens=tokens,
+        )
+    except SQLAlchemyError:
+        log.exception("could not save analysis to history")
+        run_id = None
+    return {**result, "run_id": run_id}

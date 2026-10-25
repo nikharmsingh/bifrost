@@ -1,7 +1,9 @@
 import json
+import logging
 import os
 import pathlib
 import sys
+from contextlib import asynccontextmanager
 
 import sqlalchemy as sa
 from fastapi import Depends, FastAPI, HTTPException
@@ -9,11 +11,15 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, Response
 from groq import APIError, AuthenticationError, Groq
 from pydantic import BaseModel
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.pool import NullPool
 
 # Vercel installs from requirements.txt, not the uv workspace, so load the shared auth package from the repo
 sys.path.insert(0, str(pathlib.Path(__file__).resolve().parents[3] / "packages" / "auth" / "src"))
-from bifrost_auth import Auth  # noqa: E402
+from bifrost_auth import Auth, runs  # noqa: E402
+
+APP_SLUG = "code-review"
+log = logging.getLogger(__name__)
 
 DATABASE_URL = os.getenv("DATABASE_URL", "")
 # NullPool is required for serverless — Neon handles pooling via PgBouncer
@@ -28,12 +34,22 @@ def require_db() -> sa.Engine:
 
 auth = Auth(require_db)
 
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # History lives in the shared ai_runs table, which a fresh database may not have yet
+    if engine:
+        auth.create_tables()
+    yield
+
+
 app = FastAPI(
     title="Code Reviewer",
     description="AI code review that returns a score, issues and suggestions as structured JSON. Uses your own Groq key.",
-    version="0.1.0",
+    version="0.2.0",
     docs_url="/code-review/docs",
     openapi_url="/code-review/openapi.json",
+    lifespan=lifespan,
 )
 
 app.add_middleware(CORSMiddleware, allow_origins=["*"], allow_methods=["*"], allow_headers=["*"])
@@ -86,6 +102,8 @@ class ReviewResponse(BaseModel):
     issues: list[Issue]
     strengths: list[str]
     recommendation: str
+    # Id in your history (None if it couldn't be saved); share it via /code-review/history/{run_id}/share
+    run_id: str | None = None
 
 
 def _load_ui() -> str:
@@ -117,8 +135,20 @@ async def health() -> dict:
     return {"status": "ok"}
 
 
+app.include_router(runs.router(auth.current_user, require_db, APP_SLUG, "/code-review"))
+
+
+def history_title(req: ReviewRequest) -> str:
+    first_line = next((line.strip() for line in req.code.splitlines() if line.strip()), "")
+    return f"{req.language} · {first_line[:80]}"
+
+
 @app.post("/code-review", response_model=ReviewResponse)
-def review_code(req: ReviewRequest, groq_key: str = Depends(auth.require_key("groq"))) -> dict:
+def review_code(
+    req: ReviewRequest,
+    groq_key: str = Depends(auth.require_key("groq")),
+    user: dict = Depends(auth.current_user),
+) -> dict:
     if not req.code.strip():
         raise HTTPException(status_code=400, detail="code must not be empty")
 
@@ -145,6 +175,24 @@ def review_code(req: ReviewRequest, groq_key: str = Depends(auth.require_key("gr
         raise HTTPException(status_code=502, detail=f"Review model unavailable: {exc.message}") from exc
 
     try:
-        return json.loads(response.choices[0].message.content)
-    except (json.JSONDecodeError, IndexError, TypeError):
+        review = ReviewResponse.model_validate(json.loads(response.choices[0].message.content))
+    except (ValueError, IndexError, TypeError):
         raise HTTPException(status_code=500, detail="Model returned an unexpected response format") from None
+
+    result = review.model_dump(exclude={"run_id"})
+    try:
+        run_id = runs.record(
+            require_db(),
+            user["id"],
+            APP_SLUG,
+            title=history_title(req),
+            score=review.score,
+            input={"code": req.code, "language": req.language},
+            result=result,
+            tokens=runs.token_counts(response),
+        )
+    except SQLAlchemyError:
+        # The review itself succeeded — don't lose it because history couldn't be written
+        log.exception("could not save review to history")
+        run_id = None
+    return {**result, "run_id": run_id}

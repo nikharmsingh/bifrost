@@ -99,3 +99,56 @@ def test_migrate_adds_owner_column_and_users_table_to_legacy_schema():
     assert "users" in inspector.get_table_names()
     with engine.connect() as conn:
         assert conn.execute(sa.text("SELECT owner_id FROM notes WHERE id = 'n1'")).scalar() is None
+
+
+# ── tags, pinning, PATCH ───────────────────────────────────────────────────────
+
+
+def test_tags_are_normalized_and_pinned_notes_come_first(db):
+    c = signed_in(OWNER)
+    older = c.post(
+        "/notes", json={"title": "Older", "content": "", "tags": [" #Work ", "work", "ideas"], "pinned": True}
+    )
+    assert older.status_code == 201
+    assert older.json()["tags"] == ["work", "ideas"] and older.json()["pinned"] is True
+    create_note(c, "Newer")
+    assert [n["title"] for n in c.get("/notes").json()] == ["Older", "Newer"]
+    assert c.get(f"/notes/{older.json()['id']}").json()["tags"] == ["work", "ideas"]
+
+
+@pytest.mark.parametrize("tags", [["has space"], ["x" * 33], [f"t{i}" for i in range(11)], ["<script>"]])
+def test_invalid_tags_are_rejected(db, tags):
+    assert signed_in(OWNER).post("/notes", json={"title": "x", "content": "", "tags": tags}).status_code == 422
+
+
+def test_put_without_tags_keeps_them(db):
+    c = signed_in(OWNER)
+    note = c.post("/notes", json={"title": "T", "content": "", "tags": ["keep"], "pinned": True}).json()
+    updated = c.put(f"/notes/{note['id']}", json={"title": "T2", "content": "new"}).json()
+    assert (updated["tags"], updated["pinned"], updated["content"]) == (["keep"], True, "new")
+
+
+def test_pinning_does_not_bump_updated_time_but_edits_do(db):
+    c = signed_in(OWNER)
+    note = create_note(c)
+    pinned = c.patch(f"/notes/{note['id']}", json={"pinned": True}).json()
+    assert pinned["pinned"] is True and pinned["updated_at"] == note["updated_at"]
+    tagged = c.patch(f"/notes/{note['id']}", json={"tags": ["a"]}).json()
+    assert tagged["tags"] == ["a"] and tagged["updated_at"] > note["updated_at"] and tagged["title"] == "Hello"
+    assert signed_in(OTHER).patch(f"/notes/{note['id']}", json={"pinned": False}).status_code == 404
+
+
+def test_migration_adds_tags_and_pinned_to_an_old_table(monkeypatch):
+    engine = sa.create_engine("sqlite://", poolclass=StaticPool, connect_args={"check_same_thread": False})
+    with engine.begin() as conn:
+        conn.execute(
+            sa.text(
+                "CREATE TABLE notes (id VARCHAR PRIMARY KEY, title VARCHAR NOT NULL, content VARCHAR NOT NULL, created_at VARCHAR NOT NULL, updated_at VARCHAR NOT NULL)"
+            )
+        )
+        conn.execute(sa.text("INSERT INTO notes VALUES ('old', 'Old', '', '2026-01-01', '2026-01-01')"))
+    notes.migrate(engine)
+    notes.migrate(engine)  # idempotent
+    with engine.connect() as conn:
+        row = conn.execute(sa.text("SELECT tags, pinned, owner_id FROM notes")).one()
+    assert (row.tags, bool(row.pinned), row.owner_id) == ("[]", False, None)

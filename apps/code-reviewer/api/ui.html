@@ -80,6 +80,27 @@
     .strengths li { font-size: .9rem; padding-left: 22px; position: relative; }
     .strengths li::before { content: "✓"; position: absolute; left: 2px; color: var(--ok); font-weight: 700; }
     .empty { color: var(--muted); font-size: .9rem; }
+    [hidden] { display: none !important; }
+    .result-bar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: space-between; }
+    .result-bar .when { font-size: .8rem; color: var(--muted); }
+    .share-box { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    .share-box input { flex: 1 1 260px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; color: var(--text); font: inherit; font-size: .8rem; padding: 7px 10px; font-family: ui-monospace, Menlo, monospace; }
+    button.small { padding: 6px 12px; font-size: .8rem; }
+    button.danger { color: var(--high); }
+    .shared-banner { display: flex; flex-wrap: wrap; gap: 12px; align-items: center; justify-content: space-between; margin-bottom: 16px; padding: 14px 16px; border-radius: 12px; border: 1px solid var(--focus); background: rgba(99, 102, 241, .1); font-size: .92rem; }
+    .shared-code { margin: 0; max-height: 420px; overflow: auto; padding: 14px; background: var(--bg); border: 1px solid var(--border); border-radius: 8px; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; line-height: 1.6; white-space: pre; tab-size: 4; }
+    .history { margin-top: 24px; }
+    .history-list { list-style: none; display: flex; flex-direction: column; }
+    .history-item { display: flex; align-items: center; gap: 10px; border-top: 1px solid var(--border); }
+    .history-item:first-child { border-top: none; }
+    .history-open { flex: 1; min-width: 0; display: flex; align-items: center; gap: 12px; padding: 10px 4px; background: none; border: none; color: var(--text); font-weight: 400; text-align: left; border-radius: 6px; }
+    .history-open:hover { background: var(--surface-2); }
+    .history-open.current { background: var(--surface-2); }
+    .pill { flex-shrink: 0; min-width: 34px; text-align: center; font-size: .78rem; font-weight: 700; padding: 2px 8px; border-radius: 999px; background: var(--surface-2); }
+    .history-title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-family: ui-monospace, Menlo, monospace; font-size: .82rem; }
+    .history-meta { flex-shrink: 0; font-size: .75rem; color: var(--muted); }
+    .history-delete { background: none; border: none; color: var(--faint); padding: 6px 8px; font-size: 1rem; line-height: 1; }
+    .history-delete:hover { color: var(--high); }
     footer { margin-top: 40px; text-align: center; color: var(--faint); font-size: .85rem; }
   </style>
 </head>
@@ -92,8 +113,16 @@
     </header>
 
     <div class="gate" id="gate" role="status" hidden></div>
+    <div class="shared-banner" id="sharedBanner" hidden>
+      <span>📎 A shared code review — read-only.</span>
+      <a href="/code-review">Review your own code →</a>
+    </div>
+    <section class="panel" id="sharedCodePanel" hidden>
+      <h2>Code <span class="count" id="sharedLanguage"></span></h2>
+      <pre class="shared-code" id="sharedCode"></pre>
+    </section>
 
-    <section class="panel">
+    <section class="panel" id="editorPanel">
       <div class="row">
         <div>
           <label for="language">Language</label>
@@ -124,6 +153,18 @@
     </section>
 
     <section id="results" aria-live="polite">
+      <div class="panel" id="resultBar">
+        <div class="result-bar">
+          <span class="when" id="resultWhen"></span>
+          <button type="button" class="ghost small" id="shareBtn">Share link</button>
+        </div>
+        <div class="share-box" id="shareBox" hidden style="margin-top:12px">
+          <input id="shareUrl" readonly aria-label="Share link">
+          <button type="button" class="ghost small" id="copyBtn">Copy</button>
+          <button type="button" class="ghost small danger" id="unshareBtn">Stop sharing</button>
+        </div>
+        <p class="hint" id="shareHint" hidden style="margin-top:8px">Anyone with the link can see this code and its review. Stop sharing at any time.</p>
+      </div>
       <div class="panel overview">
         <div class="score" id="score"><div class="score-inner"><div><div class="score-num" id="scoreNum"></div><div class="score-of">/ 10</div></div></div></div>
         <div class="overview-text">
@@ -139,6 +180,11 @@
         <h2>Strengths</h2>
         <ul class="strengths" id="strengths"></ul>
       </div>
+    </section>
+
+    <section class="panel history" id="historyPanel" hidden>
+      <h2>Your history <span class="count" id="historyCount"></span></h2>
+      <ul class="history-list" id="historyList"></ul>
     </section>
 
     <footer>Part of <a href="/">Bifrost</a> · <a href="/code-review/docs">API docs</a></footer>
@@ -190,6 +236,15 @@ def average(nums):
     return 'var(--high)';
   }
 
+  // The run on screen: { id, shared, share_path, created_at } — null for shared/unsaved views
+  let currentRun = null;
+  let history = [];
+
+  function formatDate(iso) {
+    const d = iso ? new Date(iso) : null;
+    return d && !isNaN(d) ? d.toLocaleString(undefined, { dateStyle: 'medium', timeStyle: 'short' }) : '';
+  }
+
   function render(data) {
     const score = Math.max(0, Math.min(10, Number(data.score) || 0));
     $('score').style.background = `conic-gradient(${scoreColor(score)} ${score * 10}%, var(--surface-2) 0)`;
@@ -215,7 +270,125 @@ def average(nums):
       : [el('li', 'empty', 'None noted.')]));
 
     $('results').classList.add('show');
+    renderShare();
     $('results').scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }
+
+  // ── share links ──────────────────────────────────────────────────────────
+
+  function renderShare() {
+    $('resultBar').hidden = !currentRun;
+    if (!currentRun) return;
+    $('resultWhen').textContent = currentRun.created_at ? `Saved to your history · ${formatDate(currentRun.created_at)}` : 'Saved to your history';
+    const shared = Boolean(currentRun.share_path);
+    $('shareBox').hidden = $('shareHint').hidden = !shared;
+    $('shareBtn').hidden = shared;
+    if (shared) $('shareUrl').value = new URL(currentRun.share_path, location.origin).href;
+  }
+
+  async function historyApi(path, options) {
+    const res = await fetch(`/code-review/history${path}`, options);
+    if (gateFromStatus(res.status)) throw new Error('Please sign in again.');
+    if (!res.ok) {
+      const data = await res.json().catch(() => ({}));
+      throw new Error(typeof data.detail === 'string' ? data.detail : `Request failed (${res.status})`);
+    }
+    return res.status === 204 ? null : res.json();
+  }
+
+  async function copyShareUrl() {
+    try { await navigator.clipboard.writeText($('shareUrl').value); $('copyBtn').textContent = 'Copied'; }
+    catch { $('shareUrl').select(); }
+    setTimeout(() => { $('copyBtn').textContent = 'Copy'; }, 1500);
+  }
+
+  async function share() {
+    try {
+      const link = await historyApi(`/${encodeURIComponent(currentRun.id)}/share`, { method: 'POST' });
+      currentRun.share_path = link.share_path;
+      renderShare();
+      copyShareUrl();
+      loadHistory();
+    } catch (err) { showError(err.message); }
+  }
+
+  async function unshare() {
+    if (!confirm('Stop sharing? The link will stop working for everyone.')) return;
+    try {
+      await historyApi(`/${encodeURIComponent(currentRun.id)}/share`, { method: 'DELETE' });
+      currentRun.share_path = null;
+      renderShare();
+      loadHistory();
+    } catch (err) { showError(err.message); }
+  }
+
+  // ── history ──────────────────────────────────────────────────────────────
+
+  function renderHistory() {
+    $('historyPanel').hidden = !history.length;
+    $('historyCount').textContent = history.length ? `${history.length} saved` : '';
+    $('historyList').replaceChildren(...history.map(item => {
+      const open = el('button', `history-open${currentRun && currentRun.id === item.id ? ' current' : ''}`);
+      open.type = 'button';
+      const pill = el('span', 'pill', item.score ?? '–');
+      if (item.score != null) pill.style.color = scoreColor(item.score);
+      open.append(pill, el('span', 'history-title', item.title), el('span', 'history-meta', `${item.shared ? '🔗 ' : ''}${formatDate(item.created_at)}`));
+      open.addEventListener('click', () => openRun(item.id));
+      const del = el('button', 'history-delete', '×');
+      del.type = 'button';
+      del.title = 'Delete from history';
+      del.setAttribute('aria-label', `Delete “${item.title}” from history`);
+      del.addEventListener('click', () => deleteRun(item));
+      const li = el('li', 'history-item');
+      li.append(open, del);
+      return li;
+    }));
+  }
+
+  async function loadHistory() {
+    try { history = await historyApi(''); renderHistory(); } catch { /* history is optional */ }
+  }
+
+  async function openRun(id) {
+    $('error').classList.remove('show');
+    try {
+      const run = await historyApi(`/${encodeURIComponent(id)}`);
+      code.value = run.input.code || '';
+      if ([...language.options].some(o => o.value === run.input.language)) language.value = run.input.language;
+      updateCounter();
+      currentRun = run;
+      render(run.result);
+      renderHistory();
+    } catch (err) { showError(err.message); }
+  }
+
+  async function deleteRun(item) {
+    if (!confirm(`Delete “${item.title}” from your history?${item.shared ? ' Its share link will stop working.' : ''}`)) return;
+    try {
+      await historyApi(`/${encodeURIComponent(item.id)}`, { method: 'DELETE' });
+      if (currentRun && currentRun.id === item.id) { currentRun = null; renderShare(); }
+      history = history.filter(h => h.id !== item.id);
+      renderHistory();
+    } catch (err) { showError(err.message); }
+  }
+
+  // ── shared view (?shared=…): read-only, no sign-in ───────────────────────
+
+  async function showShared(shareId) {
+    $('editorPanel').hidden = true;
+    $('sharedBanner').hidden = false;
+    document.title = 'Shared review · Code Reviewer';
+    try {
+      const res = await fetch(`/code-review/shared/${encodeURIComponent(shareId)}`);
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : 'This link is not available.');
+      $('sharedCode').textContent = data.input.code || '';
+      $('sharedLanguage').textContent = data.input.language || '';
+      $('sharedCodePanel').hidden = false;
+      render(data.result);
+    } catch (err) {
+      showError(err.message);
+    }
   }
 
   async function review() {
@@ -235,7 +408,9 @@ def average(nums):
       const data = await res.json().catch(() => ({}));
       if (gateFromStatus(res.status)) return;
       if (!res.ok) throw new Error(typeof data.detail === 'string' ? data.detail : `Review failed (${res.status})`);
+      currentRun = data.run_id ? { id: data.run_id, share_path: null, created_at: new Date().toISOString() } : null;
       render(data);
+      if (data.run_id) loadHistory();
     } catch (err) {
       showError(err.message);
     } finally {
@@ -250,6 +425,9 @@ def average(nums):
   });
   reviewBtn.addEventListener('click', review);
   $('sampleBtn').addEventListener('click', () => { code.value = SAMPLE; language.value = 'python'; updateCounter(); code.focus(); });
+  $('shareBtn').addEventListener('click', share);
+  $('copyBtn').addEventListener('click', copyShareUrl);
+  $('unshareBtn').addEventListener('click', unshare);
   updateCounter();
 
   // Runs on the user's own Groq key: sign-in plus a saved key are required before reviewing
@@ -276,6 +454,7 @@ def average(nums):
       if (me.status === 401) return setGate('signed-out');
       const list = keys.ok ? await keys.json() : [];
       setGate(list.some(k => k.provider === 'groq' && k.configured) ? 'ok' : 'no-key');
+      loadHistory();
     } catch { /* leave the form usable; the request itself will explain */ }
   }
   // A request can still be refused (expired session, key removed elsewhere)
@@ -284,7 +463,9 @@ def average(nums):
     if (status === 428) { setGate('no-key'); return true; }
     return false;
   }
-  checkAccess();
+  const sharedId = new URLSearchParams(location.search).get('shared');
+  if (sharedId) showShared(sharedId);
+  else checkAccess();
 </script>
 </body>
 </html>

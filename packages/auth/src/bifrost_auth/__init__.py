@@ -23,8 +23,8 @@ from fastapi.responses import RedirectResponse, Response
 from fastapi.security import APIKeyCookie
 from pydantic import BaseModel, Field
 
-from . import keys
-from ._schema import metadata, user_keys_table, users_table
+from . import keys, runs
+from ._schema import metadata, runs_table, user_keys_table, users_table
 
 __all__ = [
     "SESSION_COOKIE",
@@ -32,6 +32,8 @@ __all__ = [
     "User",
     "keys",
     "metadata",
+    "runs",
+    "runs_table",
     "sign",
     "unsign",
     "user_keys_table",
@@ -267,6 +269,11 @@ class Auth:
         @router.get("/me", response_model=User, summary="The signed-in user")
         def me(user: dict = Depends(self.current_user)) -> dict:
             return user
+
+        @router.get("/usage", summary="Your AI requests and tokens over the last 30 days")
+        def usage(user: dict = Depends(self.current_user)) -> dict:
+            with self._get_engine().connect() as conn:
+                return runs.usage(conn, user["id"])
 
         @router.get("/keys", response_model=list[KeyStatus], summary="Which provider keys you've saved")
         def list_keys(user: dict = Depends(self.current_user)) -> list[dict]:

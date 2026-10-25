@@ -193,6 +193,7 @@ def test_rejected_user_key_points_to_settings(engine, monkeypatch):
     monkeypatch.setitem(
         code_reviewer.app.dependency_overrides, code_reviewer.auth.require_key("groq"), lambda: USER_KEY
     )
+    monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.current_user, lambda: {"id": "u1"})
     response = TestClient(code_reviewer.app).post("/code-review", json={"code": "x = 1"})
     assert response.status_code == 400 and "Settings" in response.json()["detail"]
 
@@ -208,5 +209,5 @@ def test_resume_analyzer_requires_sign_in_and_uses_the_users_key(engine, monkeyp
 
     monkeypatch.setattr(resume, "Groq", RecordingGroq)
     RecordingGroq.used_keys = []
-    assert resume._analyze_groq("## Resume ...", USER_KEY)["match_score"] == 80
+    assert resume._analyze_groq("## Resume ...", USER_KEY)[0]["match_score"] == 80
     assert RecordingGroq.used_keys == [USER_KEY]

@@ -28,6 +28,7 @@ def test_hello_health_and_quotes():
 
 def test_code_review_rejects_empty_and_oversized_code(monkeypatch):
     monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.require_key("groq"), lambda: "gsk_x")
+    monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.current_user, lambda: {"id": "u1"})
     client = TestClient(code_reviewer.app)
     assert client.post("/code-review", json={"code": "   "}).status_code == 400
     assert client.post("/code-review", json={"code": "x" * 10_001}).status_code == 400
@@ -56,6 +57,7 @@ def test_assert_public_url_blocks_internal_targets(url):
 
 def test_analyze_rejects_internal_job_url(monkeypatch):
     monkeypatch.setitem(resume.app.dependency_overrides, resume.auth.require_key("groq"), lambda: "gsk_x")
+    monkeypatch.setitem(resume.app.dependency_overrides, resume.auth.current_user, lambda: {"id": "u1"})
     client = TestClient(resume.app)
     response = client.post(
         "/resume-analyzer/analyze",
@@ -104,6 +106,8 @@ def test_notes_ui_is_not_captured_as_note_id(monkeypatch):
     assert response.status_code == 200
     assert "<title>Notes</title>" in response.text
     assert ".innerHTML =" not in response.text
+    # Markdown preview goes through DOMPurify, loaded with a pinned version and SRI
+    assert "RETURN_DOM_FRAGMENT" in response.text and 'integrity="sha384-' in response.text
 
 
 def test_code_review_returns_502_when_groq_model_fails(monkeypatch):
@@ -124,6 +128,7 @@ def test_code_review_returns_502_when_groq_model_fails(monkeypatch):
 
     monkeypatch.setattr(code_reviewer, "Groq", FailingGroq)
     monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.require_key("groq"), lambda: "gsk_x")
+    monkeypatch.setitem(code_reviewer.app.dependency_overrides, code_reviewer.auth.current_user, lambda: {"id": "u1"})
     response = TestClient(code_reviewer.app).post("/code-review", json={"code": "print(1)"})
     assert response.status_code == 502
     assert "model_not_found" in response.json()["detail"]

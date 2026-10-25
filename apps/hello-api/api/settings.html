@@ -55,6 +55,21 @@
     .message.error { background: var(--bad-bg); color: var(--bad); }
     .message.success { background: var(--ok-bg); color: var(--ok); }
     .security { font-size: .82rem; color: var(--muted); margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--border); }
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(140px, 1fr)); gap: 10px; margin: 14px 0; }
+    .tile { background: var(--surface-2); border-radius: 10px; padding: 12px 14px; }
+    .tile b { display: block; font-size: 1.4rem; font-variant-numeric: tabular-nums; letter-spacing: -.01em; }
+    .tile span { font-size: .78rem; color: var(--muted); }
+    .bars { display: flex; align-items: flex-end; gap: 2px; height: 96px; padding-top: 4px; border-bottom: 1px solid var(--border); }
+    .bar { flex: 1; min-width: 0; height: 100%; display: flex; align-items: flex-end; cursor: default; }
+    .bar i { display: block; width: 100%; background: var(--accent); border-radius: 3px 3px 0 0; min-height: 0; }
+    .bar.empty i { background: var(--border); height: 2px !important; border-radius: 1px; }
+    .bar:hover i { opacity: .75; }
+    .axis { display: flex; justify-content: space-between; font-size: .72rem; color: var(--faint); margin-top: 4px; }
+    .tooltip { font-size: .8rem; color: var(--muted); min-height: 1.3em; margin-top: 6px; font-variant-numeric: tabular-nums; }
+    table { width: 100%; border-collapse: collapse; margin-top: 14px; font-size: .85rem; font-variant-numeric: tabular-nums; }
+    th, td { text-align: right; padding: 6px 4px; border-bottom: 1px solid var(--border); }
+    th:first-child, td:first-child { text-align: left; }
+    th { color: var(--muted); font-weight: 500; font-size: .78rem; }
     footer { margin-top: 24px; text-align: center; color: var(--faint); font-size: .85rem; }
   </style>
 </head>
@@ -88,6 +103,23 @@
         </form>
         <div class="message" id="message" role="status" hidden></div>
         <p class="security">🔒 The key is checked with Groq, then encrypted (AES-GCM) before it's stored. It's never shown again — only its last 4 characters — and it's used only for your own requests.</p>
+      </section>
+
+      <section class="panel" id="usagePanel">
+        <h2>Your usage · last 30 days</h2>
+        <p class="help">Requests made through Bifrost on your Groq key. Your <a href="https://console.groq.com/dashboard/usage" target="_blank" rel="noopener">Groq console</a> is the source of truth for billing.</p>
+        <div class="tiles">
+          <div class="tile"><b id="usageRequests">–</b><span>requests</span></div>
+          <div class="tile"><b id="usageTokens">–</b><span>tokens (in + out)</span></div>
+          <div class="tile"><b id="usageToday">–</b><span>requests today</span></div>
+        </div>
+        <div class="bars" id="usageBars" role="img" aria-label="Requests per day"></div>
+        <div class="axis"><span id="axisStart"></span><span>Requests per day</span><span>Today</span></div>
+        <div class="tooltip" id="usageTip" aria-live="polite"></div>
+        <table id="usageTable" hidden>
+          <thead><tr><th>App</th><th>Requests</th><th>Input tokens</th><th>Output tokens</th></tr></thead>
+          <tbody id="usageRows"></tbody>
+        </table>
       </section>
     </div>
 
@@ -125,7 +157,45 @@
     return typeof data.detail === 'string' ? data.detail : `Request failed (${res.status})`;
   }
 
+  const APP_NAMES = { 'code-review': 'Code Reviewer', 'resume-analyzer': 'Resume Analyzer' };
+  const fmt = n => Number(n).toLocaleString();
+  const fmtDay = iso => new Date(`${iso}T00:00:00Z`).toLocaleDateString(undefined, { month: 'short', day: 'numeric', timeZone: 'UTC' });
+
+  function renderUsage(usage) {
+    const total = usage.total;
+    $('usageRequests').textContent = fmt(total.requests);
+    $('usageTokens').textContent = fmt(total.prompt_tokens + total.completion_tokens);
+    $('usageToday').textContent = fmt(usage.days.at(-1).requests);
+    $('axisStart').textContent = fmtDay(usage.days[0].date);
+
+    const max = Math.max(1, ...usage.days.map(d => d.requests));
+    const describe = d => `${fmtDay(d.date)}: ${fmt(d.requests)} request${d.requests === 1 ? '' : 's'} · ${fmt(d.prompt_tokens + d.completion_tokens)} tokens`;
+    $('usageBars').replaceChildren(...usage.days.map(d => {
+      const bar = document.createElement('div');
+      bar.className = d.requests ? 'bar' : 'bar empty';
+      bar.title = describe(d);
+      const fill = document.createElement('i');
+      fill.style.height = `${(d.requests / max) * 100}%`;
+      bar.append(fill);
+      bar.addEventListener('mouseenter', () => { $('usageTip').textContent = describe(d); });
+      return bar;
+    }));
+    $('usageBars').addEventListener('mouseleave', () => { $('usageTip').textContent = ''; });
+
+    $('usageTable').hidden = !usage.apps.length;
+    $('usageRows').replaceChildren(...usage.apps.map(a => {
+      const row = document.createElement('tr');
+      for (const value of [APP_NAMES[a.app] || a.app, fmt(a.requests), fmt(a.prompt_tokens), fmt(a.completion_tokens)]) {
+        const cell = document.createElement('td');
+        cell.textContent = value;
+        row.append(cell);
+      }
+      return row;
+    }));
+  }
+
   async function start() {
+    const usagePromise = fetch('/auth/usage').then(r => (r.ok ? r.json() : null)).catch(() => null);
     const [meRes, keysRes] = await Promise.all([fetch('/auth/me'), fetch('/auth/keys')]);
     if (meRes.status === 401) { $('signedOut').hidden = false; return; }
     const user = await meRes.json();
@@ -135,6 +205,9 @@
     if (user.avatar_url && user.avatar_url.startsWith('https://')) $('avatar').src = user.avatar_url;
     const keys = keysRes.ok ? await keysRes.json() : [];
     renderKey(keys.find(k => k.provider === 'groq'));
+    const usage = await usagePromise;
+    if (usage) renderUsage(usage);
+    else $('usagePanel').hidden = true;
   }
 
   $('keyForm').addEventListener('submit', async e => {
