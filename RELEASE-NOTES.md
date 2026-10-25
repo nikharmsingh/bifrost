@@ -4,6 +4,27 @@ All notable changes to Bifrost are documented here.
 
 ---
 
+## [v0.11.0] — 2026-10-25
+
+### Added
+- **Saved history in Code Reviewer and Resume Analyzer.** Every successful review and analysis is saved to a shared Neon `ai_runs` table. A **Your history** panel lists each one with its score and date, reopens it (Code Reviewer also restores the code and language), and deletes it. The API is `GET <app>/history`, `GET <app>/history/{id}` and `DELETE <app>/history/{id}`.
+- **Share links.** **Share link** creates an unguessable public, read-only URL (`<app>?shared=…`) and copies it, and **Stop sharing** revokes it. Resume Analyzer links show the job link and the analysis only, never the resume or its file name. The API is `POST`/`DELETE <app>/history/{id}/share` and the public `GET <app>/shared/{share_id}`.
+- **Usage in Settings.** A new panel shows your last 30 days: requests, tokens, requests today, a per-day chart and a per-app table (`GET /auth/usage`).
+- **Markdown notes.** The Notes editor has a live preview with **Write / Split / Preview** views (remembered per browser), sanitized with DOMPurify. marked and DOMPurify are loaded from cdnjs at pinned versions with SRI hashes.
+- **Tags and pinning in Notes.** Tags are added comma-separated and appear as chips, with a tag filter row, and search matches `#tag`. Pinned notes appear first. The API adds `tags` and `pinned` to notes, plus `PATCH /notes/{id}` for partial updates. Pinning doesn't change a note's "updated" time.
+- **Keyboard shortcuts in Notes.** `N` new note, `/` search, `J`/`K` next and previous, `E` edit, `P` pin, `V` change view, `⌘S` or `⌘Enter` save, `Esc` leave the field. Press `?` to see the list.
+
+### Changed
+- Deleting a run from history erases its code, inputs and result but keeps its token counts, so usage stays accurate.
+- Code Reviewer and Resume Analyzer responses include a `run_id`. Model output is validated against the response schema before it's saved or returned.
+- Code Reviewer and Resume Analyzer create the shared tables on startup, so history works on a fresh database.
+
+### Upgrade notes
+- No new settings are needed. On their first start, the apps create the `ai_runs` table and add the `tags` and `pinned` columns to `notes`. Existing notes keep their content, with no tags and unpinned.
+- If an open Notes page looks unchanged after deploying, hard-refresh it (⌘⇧R).
+
+---
+
 ## [v0.10.0] — 2026-10-25
 
 ### Added
